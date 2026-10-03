@@ -1,0 +1,26 @@
+[
+  {
+    "uniqueID": "fixture-owner",
+    "username": "legacy-unicode",
+    "password": "päss🔐漢字",
+    "hash": "$2a$04$EH5NuaP459T/HURinqIiZeDKRuz6Lq1lx./N9bqoy/U7i/EJP1Mgm"
+  },
+  {
+    "uniqueID": "fixture-long",
+    "username": "legacy-long",
+    "password": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa🦊",
+    "hash": "$2a$04$MPkAVhsTNGPV2WKTvhr0jOxV3v1Jx4lrTSmAh370aUZfL5GVcx/kC"
+  },
+  {
+    "uniqueID": "fixture-other",
+    "username": "legacy-other",
+    "password": "other-fixture-password",
+    "hash": "$2a$04$Tep2QyNJHR773/ZSIw/I7eOmttl5F93/oHjdLKpm8JaLw.6fxdae6"
+  },
+  {
+    "uniqueID": "fixture-boundary",
+    "username": "legacy-boundary",
+    "password": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa🦊🦊🦊🦊🦊",
+    "hash": "$2a$04$Ge1VTf3Stt/C/bSX6k3CbO5.n5X7ycQvq7MMxDn6I5MBEtJcaO1XO"
+  }
+]

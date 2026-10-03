@@ -1,0 +1,166 @@
+name: V2 build, test and release
+on:
+  push:
+    branches: ['**']
+    tags: ['v2.*']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: v2-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+env:
+  GO_VERSION: '1.27.1'
+  NODE_VERSION: '24.19.0'
+  CGO_ENABLED: '0'
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    services:
+      mongo:
+        image: mongo:7.0.16
+        ports: ['27017:27017']
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping:1})'"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: v2/Back-End/go.sum
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            v2/Front-End/package-lock.json
+            tests/package-lock.json
+            tests/browser/package-lock.json
+      - name: Backend tests and vet
+        working-directory: v2/Back-End
+        run: |
+          go test ./...
+          go vet ./...
+          go build -trimpath -o /tmp/fileshare ./cmd/fileshare
+      - name: Frontend tests, types and static build
+        working-directory: v2/Front-End
+        run: |
+          npm ci
+          npm test
+          npm run typecheck
+          npm run build
+      - name: Legacy compatibility integration
+        run: |
+          npm ci --prefix tests --ignore-scripts
+          python3 scripts/integration.py --binary /tmp/fileshare
+      - name: Browser compatibility and responsive flows
+        working-directory: tests/browser
+        run: |
+          npm ci
+          node node_modules/playwright-core/cli.js install --with-deps chromium
+          npm run test:isolated -- --binary /tmp/fileshare --www-dir ../../v2/Back-End/www
+      - name: Upload browser evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: browser-evidence
+          path: tests/browser/artifacts/
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Packaging tests
+        run: python3 scripts/test_package_release.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: frontend-www
+          path: v2/Back-End/www/
+          if-no-files-found: error
+          retention-days: 7
+  native-test:
+    name: Native Go tests (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2025, macos-15]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: v2/Back-End/go.sum
+      - name: Native filesystem and backend unit tests
+        working-directory: v2/Back-End
+        run: |
+          go test ./...
+          go vet ./...
+  build:
+    needs: [test, native-test]
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: linux, arch: amd64}
+          - {os: linux, arch: arm64}
+          - {os: windows, arch: amd64}
+          - {os: darwin, arch: amd64}
+          - {os: darwin, arch: arm64}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: v2/Back-End/go.sum
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: frontend-www
+          path: v2/Back-End/www
+      - name: Choose release version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          version="dev-${GITHUB_SHA:0:12}"
+          if [[ "$GITHUB_REF" == refs/tags/v2.* ]]; then version="$RELEASE_TAG"; fi
+          [[ "$version" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]
+          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
+      - name: Cross compile executable
+        working-directory: v2/Back-End
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+        run: go build -trimpath -ldflags="-s -w -X main.version=$RELEASE_VERSION" -o /tmp/fileshare ./cmd/fileshare
+      - name: Package release bundle
+        env:
+          TARGET_OS: ${{ matrix.os }}
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+          python3 scripts/package-release.py --version "$RELEASE_VERSION" --os "$TARGET_OS" --arch "$TARGET_ARCH" --binary /tmp/fileshare
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: bundle-${{ matrix.os }}-${{ matrix.arch }}
+          path: release/*
+          if-no-files-found: error
+          retention-days: 14
+  release:
+    if: startsWith(github.ref, 'refs/tags/v2.')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          pattern: bundle-*
+          merge-multiple: true
+          path: release
+      - name: Checksums and GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 scripts/package-release.py --checksums
+          gh release create "$RELEASE_TAG" release/* --verify-tag --generate-notes --title "File Share $RELEASE_TAG"

@@ -1,0 +1,18 @@
+{
+  "HTTP_PORT": 8080,
+  "HTTPS_PORT": 0,
+  "PRIVATE_KEY_FILEPATH": "",
+  "CERTIFICATE_FILEPATH": "",
+  "CA_CERT_FILEPATH": "",
+  "PEM_PASSPHRASE": "",
+  "DATABASE_URL": "mongodb://127.0.0.1:27017/ReactFileShare",
+  "ACCOUNT_CREATION_CODE": "replace-with-your-private-creation-code",
+  "BCRYPT_SALT_ROUNDS": 10,
+  "JWT_SECRET_KEY": "replace-with-a-long-random-secret",
+  "JWT_EXPIRATION": "30m",
+  "MAX_UPLOAD_SIZE": 10737418240,
+  "DATE_LANGUAGE": "en-US",
+  "DATE_TIMEZONE_REGION": "UTC",
+  "SECURE_COOKIES": false,
+  "ALLOWED_ORIGINS": []
+}
