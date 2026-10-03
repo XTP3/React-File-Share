@@ -1,0 +1,16 @@
+{
+  "name": "fileshare-browser-validation",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node run.mjs",
+    "test:isolated": "node managed.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "mongodb": "6.21.0",
+    "playwright-core": "1.57.0"
+  }
+}

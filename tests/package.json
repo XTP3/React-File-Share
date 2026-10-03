@@ -1,0 +1,8 @@
+{
+  "name": "fileshare-integration-fixtures",
+  "private": true,
+  "version": "1.0.0",
+  "description": "MongoDB fixture tooling; application does not depend on this package",
+  "engines": { "node": ">=18" },
+  "dependencies": { "mongodb": "6.21.0" }
+}
