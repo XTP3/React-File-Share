@@ -63,6 +63,7 @@ export function fileQuery(
     query.set("from", String(new Date(p.from + "T00:00:00").getTime()));
   if (p.to) query.set("to", String(new Date(p.to + "T23:59:59.999").getTime()));
   if (collection !== "all") query.set("collectionId", collection);
+  else if (p.uncollected) query.set("collectionId", "uncollected");
   return query.toString();
 }
 export function bytes(value: number) {

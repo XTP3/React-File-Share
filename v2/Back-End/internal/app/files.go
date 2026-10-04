@@ -343,7 +343,16 @@ func (a *App) download(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", mime.FormatMediaType(disposition, map[string]string{"filename": name}))
 	// Uploaded HTML, SVG and documents can contain scripts. A sandbox applies
 	// even on this application's origin and deliberately omits allow-same-origin.
-	w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'; img-src data: blob:; media-src blob:; style-src 'unsafe-inline'")
+	csp := "sandbox; default-src 'none'; img-src data: blob:; media-src blob:; style-src 'unsafe-inline'"
+	mediaType, _, _ := mime.ParseMediaType(typ)
+	if strings.HasPrefix(mediaType, "audio/") || strings.HasPrefix(mediaType, "video/") {
+		// Native browser media documents read the original same-origin URL.
+		// Preserve its origin so native playback is not blocked by CORS from a
+		// sandbox's opaque origin. Scripts remain disabled. HTML/SVG retain the
+		// stricter policy above without any same-origin resource exception.
+		csp = "sandbox allow-same-origin; default-src 'none'; img-src data: blob:; media-src 'self' blob:; style-src 'unsafe-inline'"
+	}
+	w.Header().Set("Content-Security-Policy", csp)
 	w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
 	w.Header().Set("Cache-Control", "private, no-cache")
 	http.ServeContent(w, r, name, info.ModTime(), f)

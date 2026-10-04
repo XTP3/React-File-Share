@@ -18,7 +18,9 @@ File JSON retains `_id, uniqueID, fileName, fileSize, fileType, uploaderID, time
 - GET /api/v2/files query: `page` (default 1), `pageSize` (default 25/max 100), `q`, `sort` (name/date/size/type), `direction` (asc/desc), `category` (comma-separated OR), `minSize`, `maxSize`, `from`, `to` (epoch milliseconds), `collectionId` (ID or uncollected). Different dimensions combine with AND. -> `{items,total,page,pageSize,totalPages}`; empty results use 200/items [].
 - POST /api/v2/files/upload multipart files -> 200 `{files:[File]}`. Each request can contain multiple parts; limit is aggregate file bytes. UI may send bounded concurrent single-file requests. No overwrite on conflicts (409). Cancelled or rejected batches clean up all newly staged data. Optional `collectionId` query assigns successful uploads to that owned collection.
 - DELETE /api/v2/files/:id -> 200.
+- GET /api/v2/files/:id/thumbnail requires an authenticated owner cookie or Bearer token. Returns a generated static PNG, at most 384 pixels per side with aspect ratio preserved and no upscaling. JPEG, PNG, GIF (first frame), and static WebP are supported; unsupported, corrupt, oversized, or unavailable on-disk sources return 204 for an icon fallback. Sources are limited to 20 MiB, 12 million pixels, and 16,384 pixels per dimension. WebP canvas and actual frame headers are checked independently before pixel decoding. Decoding is limited to two concurrent requests; the process cache holds at most 128 entries/16 MiB and checks source identity, size, and modification time before reuse. Original files remain unchanged. Responses use `Cache-Control: private, no-store`; service workers must not cache these bodies. Missing or other-owner IDs return 404; unauthenticated requests return 401.
 - Public GET /f/d/:id (download) and /f/v/:id (inline view) preserve v1 URLs, support range requests, and never require a cookie.
+  Inline HTML/SVG use a restrictive sandbox with an opaque origin and disabled scripts. Parsed audio/video MIME responses preserve their origin for native browser playback while retaining the sandbox's disabled scripts and `default-src 'none'` policy.
 
 ## Collections
 
@@ -29,6 +31,7 @@ File JSON retains `_id, uniqueID, fileName, fileSize, fileType, uploaderID, time
 - POST /api/v2/collections/:id/files `{fileIds:[uniqueID]}` -> 200; idempotent bulk add.
 - DELETE /api/v2/collections/:id/files `{fileIds:[uniqueID]}` -> 200; removes memberships only.
 - Collection JSON: `{id,title,createdAt,updatedAt,fileCount,totalBytes}`.
+- Existing documents with absent, nonstring, unsafe, blank, or reserved (`all`/`uncollected`) IDs remain in MongoDB but are excluded from collection APIs. They must never fall back to global storage statistics. Addressable IDs with missing/invalid titles display `Untitled collection` and can be renamed or deleted through the normal owner APIs; displaying that fallback does not rewrite the original document.
 - Listing inside collections uses GET /api/v2/files?collectionId=ID with the same filters/sort/pagination.
 
 ## Storage

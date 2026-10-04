@@ -17,7 +17,7 @@ import (
 	"github.com/XTP3/React-File-Share/v2/internal/config"
 )
 
-var version = "2.0.0"
+var version = "2.1.0"
 
 type portFlag struct{ value *int }
 

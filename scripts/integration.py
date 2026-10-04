@@ -18,6 +18,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+import struct
+import zlib
 
 REPO = Path(__file__).resolve().parents[1]
 SECRET = 'synthetic-integration-jwt-secret-no-user-data'
@@ -205,12 +207,21 @@ class Suite:
         check(not (self.root / 'fixture-owner/reference-delete.txt').exists(), 'final reference deletion left physical file')
 
     def inline_security(self):
-        file = self.owner.upload([('hostile.html', b'<script>document.cookie</script>', 'text/html')])['files'][0]
-        _, _, headers = HTTP(self.base).request('GET', '/f/v/' + file['uniqueID'])
-        csp = headers.get('Content-Security-Policy', '')
-        check('sandbox' in csp and 'allow-scripts' not in csp and 'allow-same-origin' not in csp,
-              'same-origin active content requires restrictive sandbox CSP')
-        self.owner.request('DELETE', '/api/v2/files/' + file['uniqueID'])
+        for name, content, mime in [('hostile.html', b'<script>document.cookie</script>', 'text/html'),
+                                    ('hostile.svg', b'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>', 'image/svg+xml')]:
+            file = self.owner.upload([(name, content, mime)])['files'][0]
+            _, _, headers = HTTP(self.base).request('GET', '/f/v/' + file['uniqueID'])
+            csp = headers.get('Content-Security-Policy', '')
+            check('sandbox' in csp and 'allow-scripts' not in csp and 'allow-same-origin' not in csp,
+                  'same-origin active content requires restrictive sandbox CSP')
+            self.owner.request('DELETE', '/api/v2/files/' + file['uniqueID'])
+        for name, mime in [('native.webm', 'video/webm'), ('native.wav', 'audio/wav')]:
+            media = self.owner.upload([(name, b'isolated-mime-policy-fixture', mime)])['files'][0]
+            _, _, headers = HTTP(self.base).request('GET', '/f/v/' + media['uniqueID'])
+            csp = headers.get('Content-Security-Policy', '')
+            check("media-src 'self' blob:" in csp and 'sandbox allow-same-origin;' in csp and 'allow-scripts' not in csp and "default-src 'none'" in csp,
+                  'native media originals must retain sandbox and permit their same-origin source')
+            self.owner.request('DELETE', '/api/v2/files/' + media['uniqueID'])
 
     def disk_failures(self):
         directory = self.root / 'fixture-owner'
@@ -439,6 +450,48 @@ class Suite:
         owner.request('DELETE', '/api/v2/collections/' + b)
         check(self.listing()['total'] == 34 and self.owner.get('/f/d/legacy-text-id') == b'0123456789 legacy fixture\n', 'collection delete removed stored files')
 
+    def malformed_collections(self):
+        items = self.owner.get('/api/v2/collections')['items']
+        check(len(items) == 1, f'malformed legacy records became real collections: {items}')
+        recovered = items[0]
+        check(recovered['id'] == 'fixture-recoverable-title' and recovered['title'] == 'Untitled collection', 'blank valid-ID title is not recoverable')
+        check(recovered['fileCount'] == 1 and recovered['totalBytes'] == len(b'0123456789 legacy fixture\n'), 'collection reported global storage statistics')
+        route = '/api/v2/collections/' + recovered['id']
+        renamed = self.owner.request('PATCH', route, {'title': 'Recovered collection'})[1]
+        check(renamed['id'] == recovered['id'] and renamed['title'] == 'Recovered collection', 'fallback collection cannot be renamed')
+        for bad_id in ['all', 'uncollected', '%20%20%20']:
+            self.owner.request('PATCH', '/api/v2/collections/' + bad_id, {'title': 'Accidental'}, status=404)
+            self.owner.request('DELETE', '/api/v2/collections/' + bad_id, status=404)
+        fixture('restore-collection-title', self.db, self.root)
+
+    def thumbnails(self):
+        # Generate an actual PNG without depending on PIL or external binaries.
+        def chunk(kind, data):
+            return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data) & 0xffffffff)
+        width, height = 960, 480
+        png = b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, 2, 0, 0, 0))
+        png += chunk(b'IDAT', zlib.compress((b'\0' + b'\xff\0\0' * width) * height)) + chunk(b'IEND', b'')
+        file = self.owner.upload([('thumbnail-photo.png', png, 'image/png')])['files'][0]
+        route = '/api/v2/files/' + file['uniqueID'] + '/thumbnail'
+        HTTP(self.base).get(route, status=401)
+        self.other.get(route, status=404)
+        browser = self.browser_login(HTTP(self.base))
+        status, body, headers = browser.request('GET', route)
+        check(headers.get_content_type() == 'image/png' and 'no-store' in headers['Cache-Control'], 'thumbnail MIME/privacy headers differ')
+        check(body[:8] == b'\x89PNG\r\n\x1a\n' and struct.unpack('>II', body[16:24]) == (384, 192), 'thumbnail is not a bounded static image')
+        check(self.owner.get('/f/d/' + file['uniqueID']) == png, 'thumbnail mutated original upload')
+        check(self.owner.get(route) == body, 'cache returned different image')
+        self.owner.request('DELETE', '/api/v2/files/' + file['uniqueID'])
+        self.owner.get(route, status=404)
+        self.owner.get('/api/v2/files/legacy-text-id/thumbnail', status=204)
+        self.owner.get('/api/v2/files/legacy-photo-id/thumbnail', status=204)
+        self.owner.get('/api/v2/files/legacy-missing-id/thumbnail', status=204)
+        mismatched = (REPO / 'v2/Back-End/internal/app/testdata/webp-small-canvas-large-frame.webp').read_bytes()
+        webp = self.owner.upload([('mismatched.webp', mismatched, 'image/webp')])['files'][0]
+        self.owner.get('/api/v2/files/' + webp['uniqueID'] + '/thumbnail', status=204)
+        check(self.owner.get('/f/d/' + webp['uniqueID']) == mismatched, 'rejected WebP source was modified')
+        self.owner.request('DELETE', '/api/v2/files/' + webp['uniqueID'])
+
     def storage(self):
         directory = self.root / 'fixture-owner'
         expected = sum(p.stat().st_size for p in directory.iterdir() if p.is_file())
@@ -593,7 +646,7 @@ def main():
                          'rejected_uploads', 'successful_uploads', 'concurrent_duplicates', 'cancellation', 'interrupted_process',
                          'stale_journal_preserves_replacement', 'runtime_lock',
                          'duplicate_reference_delete', 'inline_security', 'disk_failures', 'database_failure',
-                         'collections', 'storage', 'account_operations', 'password_logout'):
+                         'malformed_collections', 'thumbnails', 'collections', 'storage', 'account_operations', 'password_logout'):
                 suite.run(name, getattr(suite, name))
             suite.run('legacy_bson_preservation', lambda: fixture('verify', database, uploads))
             print(f'\n{suite.passed} groups passed, {len(suite.failed)} groups failed, {suite.skipped} skipped; database {database}', flush=True)

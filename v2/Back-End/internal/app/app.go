@@ -26,17 +26,18 @@ import (
 )
 
 type App struct {
-	Version  string
-	Config   config.Config
-	DB       *mongo.Database
-	client   *mongo.Client
-	root     *os.Root
-	lock     *flock.Flock
-	mutation sync.Mutex
-	rateMu   sync.Mutex
-	rates    map[string]rateEntry
-	statsMu  sync.Mutex
-	stats    map[string]cachedStats
+	Version    string
+	Config     config.Config
+	DB         *mongo.Database
+	client     *mongo.Client
+	root       *os.Root
+	lock       *flock.Flock
+	mutation   sync.Mutex
+	rateMu     sync.Mutex
+	rates      map[string]rateEntry
+	statsMu    sync.Mutex
+	stats      map[string]cachedStats
+	thumbnails thumbnailCache
 }
 
 func New(ctx context.Context, c config.Config) (*App, error) {
@@ -68,7 +69,7 @@ func New(ctx context.Context, c config.Config) (*App, error) {
 		cl.Disconnect(context.Background())
 		return nil, e
 	}
-	a := &App{Version: "2.0.0", Config: c, DB: cl.Database(cs.Database), client: cl, root: root, stats: map[string]cachedStats{}, rates: map[string]rateEntry{}}
+	a := &App{Version: "2.1.0", Config: c, DB: cl.Database(cs.Database), client: cl, root: root, stats: map[string]cachedStats{}, rates: map[string]rateEntry{}}
 	if info, err := a.root.Lstat(".fileshare.lock"); err == nil && (!info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0) {
 		a.Close(context.Background())
 		return nil, errors.New("unsafe runtime lock")
@@ -179,6 +180,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v2/account/password", a.private(a.password))
 	mux.HandleFunc("POST /api/account/change", a.private(a.password))
 	mux.HandleFunc("GET /api/v2/files", a.private(a.list))
+	mux.HandleFunc("GET /api/v2/files/{id}/thumbnail", a.private(a.thumbnail))
 	mux.HandleFunc("POST /f", a.private(a.legacyList))
 	mux.HandleFunc("GET /f/s/{query}", a.private(a.legacySearch))
 	mux.HandleFunc("POST /api/v2/files/upload", a.private(a.upload))

@@ -1,0 +1,107 @@
+[data-slot="dialog-content"].file-preview-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(1200px, calc(100vw - 3rem));
+  max-width: none;
+  height: min(900px, calc(100dvh - 3rem));
+  max-height: none;
+  min-height: 0;
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+  background: var(--background);
+  color: var(--foreground);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+}
+
+[data-slot="dialog-content"].file-preview-dialog[data-expanded="true"],
+[data-slot="dialog-content"].file-preview-dialog:fullscreen {
+  /* Reset the utility variables too: CSS optimizers can fold translate:none into transform:none. */
+  --tw-translate-x: 0px;
+  --tw-translate-y: 0px;
+  top: 0;
+  left: 0;
+  translate: none;
+  transform: none;
+  width: 100vw;
+  height: 100dvh;
+  max-height: none;
+  border: 0;
+  border-radius: 0;
+}
+
+.file-preview-dialog::backdrop { background: var(--background); }
+.file-preview-dialog [data-slot="button"],
+.file-preview-dialog [data-slot="select-trigger"] { min-width: 44px; min-height: 44px; height: 44px; }
+.file-preview-dialog [data-slot="button"][data-size="icon"] { width: 44px; min-width: 44px; }
+.preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex: 0 0 auto;
+  padding: max(10px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 10px max(16px, env(safe-area-inset-left));
+  border-bottom: 1px solid var(--border);
+}
+.preview-heading { min-width: 0; }
+.preview-heading [data-slot="dialog-title"] { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.5; }
+.preview-heading [data-slot="dialog-description"] { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.preview-window-actions { display: flex; flex: 0 0 auto; gap: 4px; }
+.preview-body { display: flex; flex: 1 1 0; min-height: 0; min-width: 0; overflow: hidden; }
+.preview-player { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; }
+.preview-stage { position: relative; display: flex; align-items: center; justify-content: center; flex: 1 1 0; min-height: 0; min-width: 0; overflow: hidden; background: color-mix(in srgb, var(--muted) 50%, var(--background)); }
+.preview-video-stage { background: var(--preview-video-background, var(--background)); }
+.preview-stage > video, .preview-stage > img { display: block; width: 100%; height: 100%; min-height: 0; object-fit: contain; }
+.preview-audio-art { display: grid; place-items: center; width: min(35vw, 180px); aspect-ratio: 1; max-height: 80%; border-radius: var(--radius-3xl); background: color-mix(in srgb, var(--primary) 12%, var(--background)); color: var(--primary); }
+.preview-audio-art > svg { width: 45%; height: 45%; }
+.file-preview-dialog .preview-loading { position: absolute; display: flex; align-items: center; gap: 8px; height: auto; padding: 10px 16px; border-radius: var(--radius); background: var(--background); color: var(--foreground); box-shadow: 0 2px 16px color-mix(in srgb, var(--foreground) 12%, transparent); }
+.preview-loading svg { width: 18px; height: 18px; }
+.preview-error { position: absolute; display: flex; flex-direction: column; align-items: center; gap: 16px; max-width: 440px; max-height: 100%; margin: 16px; padding: 20px; overflow-y: auto; text-align: center; color: var(--foreground); background: var(--background); border-radius: var(--radius); }
+.preview-error [data-slot="alert-description"] { display: flex; flex-direction: column; align-items: center; gap: 16px; }
+.preview-error [data-slot="alert-description"] p { margin: 0; }
+.preview-unsupported { flex-direction: column; gap: 16px; padding: 24px; text-align: center; color: var(--muted-foreground); }
+.preview-unsupported > svg { width: 56px; height: 56px; }
+.preview-playback-controls { flex: 0 0 auto; padding: 4px max(16px, env(safe-area-inset-right)) 8px max(16px, env(safe-area-inset-left)); background: var(--background); border-top: 1px solid var(--border); }
+.preview-timeline { display: flex; align-items: center; gap: 12px; }
+.preview-time { font-size: 12px; font-variant-numeric: tabular-nums; color: var(--muted-foreground); white-space: nowrap; }
+.preview-seek { position: relative; flex: 1; min-width: 0; }
+.preview-buffer { position: absolute; left: 0; top: calc(50% - 3px); height: 6px; background: color-mix(in srgb, var(--foreground) 25%, var(--muted)); border-radius: 99px; }
+.file-preview-dialog [data-slot="slider"] { min-height: 44px; }
+.preview-seek [data-slot="slider-track"] { background: color-mix(in srgb, var(--muted) 50%, transparent); }
+.file-preview-dialog [data-slot="slider-thumb"] { width: 20px; height: 20px; }
+.file-preview-dialog [data-slot="slider-thumb"]::after { content: ""; position: absolute; inset: -12px; }
+.preview-control-row { display: flex; align-items: center; gap: 8px; }
+.preview-control-row .preview-volume { width: clamp(60px, 12vw, 140px); }
+.preview-control-row .preview-speed { margin-left: auto; min-width: 64px; }
+.preview-file-actions { display: flex; flex: 0 0 auto; align-items: center; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--border); padding: 10px max(16px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
+
+@media (max-width: 640px) {
+  [data-slot="dialog-content"].file-preview-dialog {
+    --tw-translate-x: 0px;
+    --tw-translate-y: 0px;
+    top: 0;
+    left: 0;
+    translate: none;
+    transform: none;
+    width: 100vw;
+    height: 100dvh;
+    max-width: none;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+  }
+  .preview-header { gap: 4px; padding-left: max(12px, env(safe-area-inset-left)); padding-right: max(6px, env(safe-area-inset-right)); }
+  .preview-window-actions { gap: 0; }
+  .preview-heading [data-slot="dialog-title"] { font-size: 14px; }
+  .preview-file-actions { gap: 6px; padding-left: max(8px, env(safe-area-inset-left)); padding-right: max(8px, env(safe-area-inset-right)); }
+  .preview-file-actions [data-slot="button"] { flex: 1; padding-inline: 8px; font-size: 12px; gap: 5px; }
+  .preview-playback-controls { padding-inline: max(12px, env(safe-area-inset-left)); }
+  .preview-timeline { gap: 8px; }
+}
+
+@media (max-height: 500px) and (orientation: landscape) {
+  .preview-header { padding-block: max(2px, env(safe-area-inset-top)); }
+  .preview-file-actions { padding-block: max(2px, env(safe-area-inset-bottom)); }
+  .preview-playback-controls { padding-block: 0; }
+}

@@ -6,6 +6,19 @@ export const password = 'Browser-fixture-2026!';
 export const changedPassword = 'Changed-browser-fixture-2026!';
 export const photo = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jM1QAAAAASUVORK5CYII=', 'base64');
 
+// Four seconds of PCM audio: generated in Node so CI needs no media tooling.
+export function audioFixture() {
+  const sampleRate = 8000, samples = sampleRate * 4;
+  const wav = Buffer.alloc(44 + samples * 2);
+  wav.write('RIFF', 0); wav.writeUInt32LE(wav.length - 8, 4); wav.write('WAVEfmt ', 8);
+  wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22);
+  wav.writeUInt32LE(sampleRate, 24); wav.writeUInt32LE(sampleRate * 2, 28);
+  wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34); wav.write('data', 36);
+  wav.writeUInt32LE(samples * 2, 40);
+  for (let index = 0; index < samples; index++) wav.writeInt16LE(Math.round(Math.sin(index * 2 * Math.PI * 440 / sampleRate) * 1000), 44 + index * 2);
+  return wav;
+}
+
 export async function api(request, path, { method = 'GET', data, csrfToken, multipart, expected = 200 } = {}) {
   const response = await request.fetch(`/api/v2${path}`, {
     method, data, multipart, headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : undefined,

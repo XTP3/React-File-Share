@@ -163,4 +163,4 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           python3 scripts/package-release.py --checksums
-          gh release create "$RELEASE_TAG" release/* --verify-tag --generate-notes --title "File Share $RELEASE_TAG"
+          gh release create "$RELEASE_TAG" release/* --verify-tag --generate-notes --title "X $RELEASE_TAG"
