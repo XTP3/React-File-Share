@@ -210,10 +210,29 @@ func TestThumbnailLimitsCancellationAndCacheIdentity(t *testing.T) {
 	if !bytes.Equal(original, preserved.Bytes()) {
 		t.Fatal("thumbnail mutated file")
 	}
-	info, _ := root.Lstat(path)
-	root.Remove(path) // replacement identity must invalidate even equal size/mtime
+	info, e := root.Lstat(path)
+	if e != nil {
+		t.Fatal(e)
+	}
+	// Retain the old inode so an unlink/create cannot recycle its identity.
+	// Replacement must invalidate the cache even with equal size and mtime.
+	if e = root.Rename(path, filepath.Join("owner", "retained-original.png")); e != nil {
+		t.Fatal(e)
+	}
 	write(0)
-	os.Chtimes(filepath.Join(root.Name(), path), info.ModTime(), info.ModTime())
+	if e = os.Chtimes(filepath.Join(root.Name(), path), info.ModTime(), info.ModTime()); e != nil {
+		t.Fatal(e)
+	}
+	replacement, e := root.Lstat(path)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if os.SameFile(info, replacement) {
+		t.Fatal("replacement fixture reused the original file identity")
+	}
+	if info.Size() != replacement.Size() || !info.ModTime().Equal(replacement.ModTime()) {
+		t.Fatal("replacement fixture must preserve source size and modification time")
+	}
 	secondBody, e := a.loadThumbnail(context.Background(), "owner", "image.png")
 	if e != nil || bytes.Equal(firstBody, secondBody) {
 		t.Fatal("replacement reused thumbnail")

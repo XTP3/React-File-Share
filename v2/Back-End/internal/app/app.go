@@ -69,7 +69,7 @@ func New(ctx context.Context, c config.Config) (*App, error) {
 		cl.Disconnect(context.Background())
 		return nil, e
 	}
-	a := &App{Version: "2.1.0", Config: c, DB: cl.Database(cs.Database), client: cl, root: root, stats: map[string]cachedStats{}, rates: map[string]rateEntry{}}
+	a := &App{Version: "2.1.1", Config: c, DB: cl.Database(cs.Database), client: cl, root: root, stats: map[string]cachedStats{}, rates: map[string]rateEntry{}}
 	if info, err := a.root.Lstat(".fileshare.lock"); err == nil && (!info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0) {
 		a.Close(context.Background())
 		return nil, errors.New("unsafe runtime lock")
