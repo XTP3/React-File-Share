@@ -513,7 +513,7 @@ try {
     const uploadBox = await page.getByRole('button', { name: 'Upload', exact: true }).boundingBox();
     const headingBox = await page.locator('.page-heading').boundingBox();
     assert.ok(Math.abs(uploadBox.width - headingBox.width) <= 2, 'Upload spans the mobile content width');
-    assert.equal(await page.locator('[aria-label="File explorer"] table').count(), 0, 'Mobile list does not mount a second desktop table');
+    await eventually(async () => assert.equal(await page.locator('[aria-label="File explorer"] table').count(), 0), 'Mobile list does not mount a second desktop table');
     assert.equal(await page.getByRole('checkbox', { name: 'Select browser-archive.zip', exact: true }).count(), 1);
     await screenshot('mobile-files-dark');
     await page.evaluate(() => document.querySelector('[aria-label="File explorer"]').scrollIntoView({ block: 'start' }));
@@ -547,7 +547,7 @@ try {
     report.mobileTypography.queueRemoveWidth = removeSize.width; report.mobileTypography.queueRemoveHeight = removeSize.height;
     await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
     await page.setViewportSize({ width: 1440, height: 1000 });
-    assert.equal(await page.locator('.mobile-file-list').count(), 0, 'Desktop list does not mount mobile cards');
+    await eventually(async () => assert.equal(await page.locator('.mobile-file-list').count(), 0), 'Desktop list does not mount mobile cards');
   });
 
   await check('Installable PWA shell works offline and account APIs are not cached', async () => {
