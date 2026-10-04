@@ -2,6 +2,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -127,6 +128,36 @@ func (a *App) indexes(ctx context.Context) error {
 		"sessions":               {{Keys: bson.D{{Key: "expiresAt", Value: 1}}, Options: options.Index().SetExpireAfterSeconds(0)}, {Keys: bson.D{{Key: "ownerID", Value: 1}}}},
 	}
 	for name, models := range sets {
+		// These are lookup indexes, not new constraints. Deployments may already
+		// have unique or custom-named versions; keep their definitions intact.
+		// V2-owned unique and TTL indexes below still use strict creation.
+		if name == "users" || name == "files" {
+			existing, e := a.DB.Collection(name).Indexes().ListSpecifications(ctx)
+			if e != nil {
+				return fmt.Errorf("list indexes %s: %w", name, e)
+			}
+			missing := make([]mongo.IndexModel, 0, len(models))
+			for _, model := range models {
+				keys, e := bson.Marshal(model.Keys)
+				if e != nil {
+					return fmt.Errorf("index keys %s: %w", name, e)
+				}
+				found := false
+				for _, index := range existing {
+					if bytes.Equal(keys, index.KeysDocument) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					missing = append(missing, model)
+				}
+			}
+			models = missing
+		}
+		if len(models) == 0 {
+			continue
+		}
 		if _, e := a.DB.Collection(name).Indexes().CreateMany(ctx, models); e != nil {
 			return fmt.Errorf("index %s: %w", name, e)
 		}
