@@ -323,6 +323,13 @@ try {
     await page.getByRole('dialog').getByRole('button', { name: 'Delete', exact: true }).click();
     await eventually(async () => assert.equal((await api(context.request, '/collections')).items.length, 0), 'Deleted collection');
     assert.equal((await api(context.request, '/files')).total, 33, 'Deleting a collection must preserve files');
+    // API completion can precede the deletion handler replacing the Explorer.
+    // Wait for its UI transition before the next group edits the search input.
+    await page.getByRole('dialog').waitFor({ state: 'hidden' });
+    await page.waitForURL(url => url.pathname === '/files');
+    await visible(page.getByRole('heading', { name: 'All Files', exact: true, level: 2 }));
+    await currentHeader('Files');
+    assert.equal(await page.getByLabel('Search files', { exact: true }).inputValue(), '');
   });
 
   await check('Static thumbnails defer original images and media previews work on desktop and mobile', async () => {
