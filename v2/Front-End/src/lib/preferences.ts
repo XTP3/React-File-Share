@@ -21,6 +21,7 @@ export function readPreferences(
       direction: p.direction === "asc" ? "asc" : "desc",
       pageSize: [25, 50, 100].includes(p.pageSize) ? p.pageSize : 25,
       q: typeof p.q === "string" ? p.q.slice(0, 200) : "",
+      uncollected: p.uncollected === true,
       categories: Array.isArray(p.categories)
         ? p.categories.filter((c: unknown) => categories.includes(c as never))
         : [],

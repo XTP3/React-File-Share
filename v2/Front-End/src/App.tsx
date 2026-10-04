@@ -1,11 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { flushSync } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  FolderUp,
   Files,
   Folder,
-  FolderOpen,
   Plus,
   Menu,
   CloudUpload,
@@ -14,13 +12,6 @@ import {
   LogOut,
   Trash2,
   Pencil,
-  HardDrive,
-  Download,
-  Link,
-  Play,
-  Pause,
-  Volume2,
-  VolumeX,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -30,7 +21,6 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Progress } from "@/components/ui/progress";
-import { AspectRatio } from "@/components/ui/aspect-ratio";
 import {
   Dialog,
   DialogContent,
@@ -61,12 +51,15 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { Auth } from "@/features/Auth";
-import { Explorer, FileThumbnail } from "@/features/Explorer";
+import { Explorer } from "@/features/Explorer";
+import { FilePreview } from "@/features/FilePreview";
+import { Logo } from "@/components/Logo";
+import { readPreferences, savePreferences } from "@/lib/preferences";
 import { Storage } from "@/features/Storage";
 import { UploadQueue } from "@/features/UploadQueue";
 import { Connection } from "@/features/Connection";
 import { ThemeControl } from "@/features/ThemeControl";
-import { api, APIError, bytes, setCSRF, shareURL } from "@/lib/api";
+import { api, APIError, bytes, setCSRF } from "@/lib/api";
 import type {
   Collection,
   Session,
@@ -88,104 +81,6 @@ type Action =
   | { kind: "rename" | "deleteCollection"; collection: Collection }
   | { kind: "deleteFiles" | "assign" | "remove"; files: SharedFile[] }
   | { kind: "password" };
-function Media({ file }: { file: SharedFile }) {
-  const ref = useRef<HTMLVideoElement & HTMLAudioElement>(null);
-  const [playing, setPlaying] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [muted, setMuted] = useState(false);
-  const [failed, setFailed] = useState(false);
-  return (
-    <Card className="media-card">
-      <CardContent>
-        {failed ? (
-          <Alert variant="destructive">
-            <AlertDescription>
-              Preview unavailable. Download the file to open it.
-            </AlertDescription>
-          </Alert>
-        ) : (
-          <>
-            {file.category === "video" ? (
-              <AspectRatio ratio={16 / 9}>
-                <video
-                  ref={ref}
-                  src={shareURL(file.uniqueID, "v")}
-                  playsInline
-                  preload="metadata"
-                  onTimeUpdate={() => {
-                    const m = ref.current;
-                    if (m)
-                      setProgress(
-                        m.duration ? (m.currentTime / m.duration) * 100 : 0,
-                      );
-                  }}
-                  onEnded={() => setPlaying(false)}
-                  onError={() => setFailed(true)}
-                />
-              </AspectRatio>
-            ) : (
-              <>
-                <div className="audio-poster">
-                  <FileThumbnail file={file} />
-                </div>
-                <audio
-                  ref={ref}
-                  src={shareURL(file.uniqueID, "v")}
-                  preload="metadata"
-                  onTimeUpdate={() => {
-                    const m = ref.current;
-                    if (m)
-                      setProgress(
-                        m.duration ? (m.currentTime / m.duration) * 100 : 0,
-                      );
-                  }}
-                  onEnded={() => setPlaying(false)}
-                  onError={() => setFailed(true)}
-                />
-              </>
-            )}
-            <div className="media-controls">
-              <Button
-                variant="outline"
-                size="icon"
-                aria-label={playing ? "Pause preview" : "Play preview"}
-                onClick={async () => {
-                  if (!ref.current) return;
-                  if (playing) {
-                    ref.current.pause();
-                    setPlaying(false);
-                  } else
-                    try {
-                      await ref.current.play();
-                      setPlaying(true);
-                    } catch {
-                      toast.error(
-                        "This browser cannot play the file. Download it to open.",
-                      );
-                    }
-                }}
-              >
-                {playing ? <Pause /> : <Play />}
-              </Button>
-              <Progress value={progress} aria-label="Playback progress" />
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label={muted ? "Unmute preview" : "Mute preview"}
-                onClick={() => {
-                  if (ref.current) ref.current.muted = !muted;
-                  setMuted(!muted);
-                }}
-              >
-                {muted ? <VolumeX /> : <Volume2 />}
-              </Button>
-            </div>
-          </>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
 export default function App() {
   const client = useQueryClient();
   const [session, setSession] = useState<Session | null>(null);
@@ -259,7 +154,7 @@ export default function App() {
       setPreview(null);
       setUploadOpen(false);
       setUploading(false);
-      setAuthError("Your session expired. Sign in to continue.");
+      setAuthError("Your session expired. Log in to continue.");
       history.replaceState({}, "", "/Login");
     };
     window.addEventListener("fileshare:session-expired", expired);
@@ -274,6 +169,17 @@ export default function App() {
     window.addEventListener("popstate", navigate);
     return () => window.removeEventListener("popstate", navigate);
   }, []);
+
+  useEffect(() => {
+    if (session && collection === "uncollected") {
+      savePreferences(session.user.uniqueID, "all", {
+        ...readPreferences(session.user.uniqueID, "all"),
+        uncollected: true,
+      });
+      history.replaceState({}, "", "/files");
+      setCollection("all");
+    }
+  }, [session, collection]);
 
   function login(s: Session) {
     setCSRF(s.csrfToken);
@@ -324,7 +230,7 @@ export default function App() {
         await api(
           action.kind === "create"
             ? "/collections"
-            : "/collections/" + action.collection.id,
+            : "/collections/" + encodeURIComponent(action.collection.id),
           {
             method: action.kind === "create" ? "POST" : "PATCH",
             body: JSON.stringify({ title: title.trim() }),
@@ -336,7 +242,7 @@ export default function App() {
             : "Collection renamed",
         );
       } else if (action.kind === "deleteCollection") {
-        await api("/collections/" + action.collection.id, { method: "DELETE" });
+        await api("/collections/" + encodeURIComponent(action.collection.id), { method: "DELETE" });
         if (collection === action.collection.id) flushSync(() => navigate("all"));
         await client.cancelQueries({queryKey:["files",session?.user.uniqueID,action.collection.id]});
         client.removeQueries({queryKey:["files",session?.user.uniqueID,action.collection.id]});
@@ -347,7 +253,7 @@ export default function App() {
         );
       } else if (action.kind === "assign") {
         if (!target) throw Error("Choose a collection.");
-        await api("/collections/" + target + "/files", {
+        await api("/collections/" + encodeURIComponent(target) + "/files", {
           method: "POST",
           body: JSON.stringify({
             fileIds: action.files.map((f) => f.uniqueID),
@@ -355,7 +261,7 @@ export default function App() {
         });
         toast.success("Files added to collection");
       } else if (action.kind === "remove") {
-        await api("/collections/" + collection + "/files", {
+        await api("/collections/" + encodeURIComponent(collection) + "/files", {
           method: "DELETE",
           body: JSON.stringify({
             fileIds: action.files.map((f) => f.uniqueID),
@@ -397,7 +303,7 @@ export default function App() {
         client.clear();
         setCSRF("");
         setSession(null);
-        toast.success("Password changed. Sign in again.");
+        toast.success("Password changed. Log in again.");
       }
       invalidate();
       setAction(null);
@@ -422,18 +328,20 @@ export default function App() {
       setReconciling(false);
     }
   }
-  const list = collections.data?.items || [];
+  const list = (collections.data?.items || [])
+    .filter((c) => typeof c?.id === "string" && c.id.trim() && !["all", "uncollected"].includes(c.id))
+    .map((c) => ({ ...c, title: typeof c.title === "string" && c.title.trim() ? c.title : "Untitled collection" }));
   const current = list.find((c) => c.id === collection);
+  useEffect(() => {
+    if (session && collections.isSuccess && collection !== "all" && collection !== "uncollected" && !current) {
+      history.replaceState({}, "", "/files");
+      setCollection("all");
+      toast.info("This collection is unavailable. Showing your files.");
+    }
+  }, [session, collections.isSuccess, collection, current]);
   const nav = (
     <>
-      <div className="brand">
-        <span className="brand-mark">
-          <FolderUp />
-        </span>
-        <span>
-          file share<span className="brand-version">v2</span>
-        </span>
-      </div>
+      <div className="brand"><Logo size={48} /></div>
       <span className="nav-caption">YOUR WORKSPACE</span>
       <Button
         variant="ghost"
@@ -441,16 +349,8 @@ export default function App() {
         onClick={() => navigate("all")}
       >
         <Files />
-        All files
+        All Files
         <Badge variant="secondary">{stats.data?.totalFiles || 0}</Badge>
-      </Button>
-      <Button
-        variant="ghost"
-        className={`nav-item ${collection === "uncollected" ? "active" : ""}`}
-        onClick={() => navigate("uncollected")}
-      >
-        <FolderOpen />
-        Uncollected
       </Button>
       <div className="nav-collections-heading">
         <span className="nav-caption">COLLECTIONS</span>
@@ -509,25 +409,6 @@ export default function App() {
           </div>
         ))}
       </div>
-      <Button
-        variant="outline"
-        className="new-collection-button"
-        onClick={() => begin({ kind: "create" })}
-      >
-        <Plus />
-        New collection
-      </Button>
-      <Card className="sidebar-foot">
-        <CardContent>
-          <HardDrive />
-          <p>Everything in its place.</p>
-          <span className="muted">
-            Collections organize your files.
-            <br />
-            Your originals stay right here.
-          </span>
-        </CardContent>
-      </Card>
     </>
   );
   if (checking)
@@ -535,7 +416,7 @@ export default function App() {
       <main className="session-loading">
         <Card>
           <CardContent>
-            <FolderUp />
+            <Logo size={56} />
             <p>Opening your workspace…</p>
             <Progress />
           </CardContent>
@@ -578,10 +459,9 @@ export default function App() {
               <Menu />
             </Button>
             <span className="header-breadcrumb">
-              Workspace<span>/</span>
               <strong>
                 {collection === "all"
-                  ? "All files"
+                  ? "Files"
                   : collection === "uncollected"
                     ? "Uncollected"
                     : current?.title || "Collection"}
@@ -622,25 +502,11 @@ export default function App() {
           <Connection uploading={uploading} />
           <div className="page-heading">
             <div>
-              <span className="eyebrow">YOUR PERSONAL LIBRARY</span>
-              <h1>
-                {collection === "all"
-                  ? "A home for your files."
-                  : collection === "uncollected"
-                    ? "Waiting for a collection."
-                    : current?.title || "Your collection"}
-              </h1>
-              <p className="muted">
-                {collection === "all"
-                  ? "Keep the important things close. Share the rest with a link."
-                  : collection === "uncollected"
-                    ? "Bring these files together into a collection."
-                    : "A little organization goes a long way."}
-              </p>
+              <h1>{collection === "all" || collection === "uncollected" ? "Files" : current?.title || "Collection"}</h1>
             </div>
             <Button onClick={() => setUploadOpen(true)}>
               <CloudUpload />
-              Upload files
+              Upload
             </Button>
           </div>
           <Storage
@@ -695,7 +561,7 @@ export default function App() {
             collection={collection}
             title={
               collection === "all"
-                ? "All files"
+                ? "All Files"
                 : collection === "uncollected"
                   ? "Uncollected files"
                   : current?.title || "Collection files"
@@ -709,7 +575,7 @@ export default function App() {
             onRefresh={invalidate}
           />
           <footer className="workspace-footer">
-            <span>File Share v2</span>
+            <Logo size={24} />
             <span>Your files, simply shared.</span>
           </footer>
         </main>
@@ -885,77 +751,7 @@ export default function App() {
           </form>
         </DialogContent>
       </Dialog>
-      <Dialog
-        open={!!preview}
-        onOpenChange={(open) => {
-          if (!open) setPreview(null);
-        }}
-      >
-        <DialogContent className="preview-dialog">
-          <DialogHeader>
-            <DialogTitle className="preview-title">
-              {preview?.fileName}
-            </DialogTitle>
-            <DialogDescription>
-              {preview &&
-                `${bytes(preview.fileSize)} · ${preview.fileType || "File"}`}
-            </DialogDescription>
-          </DialogHeader>
-          {preview &&
-            (preview.category === "photo" || preview.category === "gif" ? (
-              <Card className="image-preview">
-                <CardContent>
-                  <AspectRatio ratio={16 / 10}>
-                    <img
-                      src={shareURL(preview.uniqueID, "v")}
-                      alt={preview.fileName}
-                    />
-                  </AspectRatio>
-                </CardContent>
-              </Card>
-            ) : preview.category === "video" || preview.category === "audio" ? (
-              <Media file={preview} />
-            ) : (
-              <Card>
-                <CardContent className="unsupported-preview">
-                  <FileThumbnail file={preview} />
-                  <p>Ready when you are.</p>
-                  <span className="muted">
-                    Download this file to open it in your favorite app.
-                  </span>
-                </CardContent>
-              </Card>
-            ))}
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={async () => {
-                if (preview)
-                  try {
-                    await navigator.clipboard.writeText(
-                      shareURL(preview.uniqueID, "v"),
-                    );
-                    toast.success("View link copied");
-                  } catch {
-                    toast.error("Could not copy link");
-                  }
-              }}
-            >
-              <Link />
-              Copy view link
-            </Button>
-            <Button asChild>
-              <a
-                href={preview ? shareURL(preview.uniqueID, "d") : "#"}
-                download
-              >
-                <Download />
-                Download
-              </a>
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <FilePreview file={preview} onClose={() => setPreview(null)} />
     </div>
   );
 }

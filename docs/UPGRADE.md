@@ -2,6 +2,8 @@
 
 V2 uses the existing MongoDB database and `uploads/<user uniqueID>/<filename>` layout. It accepts legacy `Back-End/Config.json`, existing bcrypt passwords and unexpired bearer tokens, and preserves `/f/v/:id` and `/f/d/:id` public links. No mandatory password reset, record conversion or file move is required. New collection/membership/recovery records are additive.
 
+Use v2.0.1 or later when upgrading a database with existing indexes. V2.0.0 can fail startup with `IndexKeySpecsConflict` if a lookup index is already unique. V2.0.1 preserves existing lookup index names and options and adds missing indexes. Do not drop unique indexes to work around the v2.0.0 error.
+
 Moving source code under `v1/` does not move your deployed data. Record the actual configuration, database and uploads paths, service account, public hostname, TLS paths, proxy configuration and running v1 version before changing deployment. Preserve the archived v1 application and its dependencies for rollback. Stage the v2 bundle in a new directory alongside the current deployment.
 
 1. Announce a maintenance window and block new writes at the proxy. Stop the old server and ensure there are no active upload/delete operations. Do not run v1 and v2 writers simultaneously against the same data.

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import {
   Search,
@@ -25,6 +25,7 @@ import {
   RefreshCw,
   Check,
   CalendarDays,
+  ExternalLink,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -97,23 +98,39 @@ const icons = {
   archive: Archive,
   other: FileIcon,
 };
-export function FileThumbnail({ file }: { file: SharedFile }) {
+export const FileThumbnail = memo(function FileThumbnail({ file }: { file: SharedFile }) {
   const Icon = icons[file.category] || FileIcon;
-  const [failed, setFailed] = useState(false);
+  const source = `${file.uniqueID}:${file.timeOfUpload}`;
+  const [failed, setFailed] = useState<string | null>(null);
   return (
     <span className={`file-thumbnail category-${file.category}`}>
-      {(file.category === "photo" || file.category === "gif") && !failed ? (
+      {(file.category === "photo" || file.category === "gif") && failed !== source ? (
         <img
-          src={shareURL(file.uniqueID, "v")}
+          src={`/api/v2/files/${encodeURIComponent(file.uniqueID)}/thumbnail`}
           loading="lazy"
+          decoding="async"
+          width={384}
+          height={384}
           alt=""
-          onError={() => setFailed(true)}
+          onError={() => setFailed(source)}
         />
       ) : (
         <Icon />
       )}
     </span>
   );
+});
+
+function useMobileList() {
+  const [mobile, setMobile] = useState(() => window.matchMedia("(max-width: 600px)").matches);
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 600px)");
+    const update = () => setMobile(query.matches);
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+  return mobile;
 }
 function DatePicker({
   label,
@@ -190,6 +207,7 @@ export function Explorer({
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState(new Set<string>());
   const [filters, setFilters] = useState(false);
+  const mobile = useMobileList();
   const debounce = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => {
     savePreferences(user, collection, prefs);
@@ -241,7 +259,9 @@ export function Explorer({
     Number(!!prefs.minSize) +
     Number(!!prefs.maxSize) +
     Number(!!prefs.from) +
-    Number(!!prefs.to);
+    Number(!!prefs.to) +
+    Number(collection === "all" && prefs.uncollected);
+  const uncollected = collection === "all" && prefs.uncollected;
   async function copy(file: SharedFile, kind: "d" | "v") {
     try {
       await navigator.clipboard.writeText(shareURL(file.uniqueID, kind));
@@ -268,6 +288,12 @@ export function Explorer({
           <DropdownMenuItem onSelect={() => onPreview(file)}>
             <Eye />
             Preview
+          </DropdownMenuItem>
+          <DropdownMenuItem asChild>
+            <a href={shareURL(file.uniqueID, "v")} target="_blank" rel="noopener noreferrer">
+              <ExternalLink />
+              Open original
+            </a>
           </DropdownMenuItem>
           <DropdownMenuItem asChild>
             <a href={shareURL(file.uniqueID, "d")} download>
@@ -417,6 +443,14 @@ export function Explorer({
       </div>
       {activeFilters > 0 && (
         <div className="active-filters">
+          {uncollected && (
+            <Badge variant="secondary">
+              Uncollected
+              <Button variant="ghost" size="icon-xs" aria-label="Clear Uncollected filter" onClick={() => patch({ uncollected: false })}>
+                <X />
+              </Button>
+            </Badge>
+          )}
           {prefs.categories.map((c) => (
             <Badge variant="secondary" key={c}>
               {categoryLabels[c]}
@@ -536,12 +570,12 @@ export function Explorer({
           >
             {prefs.q || activeFilters
               ? "Reset search and filters"
-              : "Upload files"}
+              : "Upload"}
           </Button>
         </Empty>
       ) : (
         <>
-          <div
+          {(prefs.view === "grid" || !mobile) && <div
             className={
               prefs.view === "grid" ? "file-grid" : "desktop-file-table"
             }
@@ -647,8 +681,8 @@ export function Explorer({
                 </TableBody>
               </Table>
             )}
-          </div>
-          {prefs.view === "list" && (
+          </div>}
+          {prefs.view === "list" && mobile && (
             <div className="mobile-file-list">
               {items.map((file) => (
                 <Card key={file.uniqueID}>
@@ -735,6 +769,12 @@ export function Explorer({
             </SheetDescription>
           </SheetHeader>
           <div className="filter-body">
+            {collection === "all" && (
+              <Label className="collection-filter">
+                <Checkbox checked={prefs.uncollected} onCheckedChange={(checked) => patch({ uncollected: checked === true })} />
+                Uncollected
+              </Label>
+            )}
             <Label>File types</Label>
             <div className="category-filters">
               {categories.map((c) => (
@@ -798,6 +838,7 @@ export function Explorer({
                 </AlertDescription>
               </Alert>
             )}
+          </div>
             <div className="filter-footer">
               <Button
                 variant="outline"
@@ -809,7 +850,6 @@ export function Explorer({
               </Button>
               <Button onClick={() => setFilters(false)}>Show results</Button>
             </div>
-          </div>
         </SheetContent>
       </Sheet>
     </section>

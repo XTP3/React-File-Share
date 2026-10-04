@@ -60,14 +60,43 @@ try {
     // Legacy duplicate references must count a physical path once.
     files.push({ ...files[0], _id: new ObjectId(), uniqueID: 'legacy-duplicate-reference' });
     await db.collection('files').insertMany(files);
+    // A non-v2 document in the same Mongo collection used to become a blank
+    // collection with whole-library statistics when its absent ID became "".
+    const collections = [
+      { _id: new ObjectId(), ownerID: accounts[0].uniqueID, legacyOnly: { preserve: true } },
+      ...['', '   ', 'all', 'uncollected', 'a/b'].map(id => ({ _id: new ObjectId(), ownerID: accounts[0].uniqueID, id, title: '', legacyOnly: true })),
+      { _id: new ObjectId(), ownerID: accounts[0].uniqueID, id: 42, title: 'Wrong ID type' },
+      { _id: new ObjectId(), ownerID: accounts[0].uniqueID, id: 'fixture-recoverable-title', title: '', unknownLegacy: { retained: true } },
+    ];
+    await db.collection('collections').insertMany(collections);
+    await db.collection('collection_memberships').insertOne({ ownerID: accounts[0].uniqueID,
+      collectionId: 'fixture-recoverable-title', fileId: 'legacy-text-id' });
+    // Existing deployments can have unique indexes even though the archived
+    // Mongoose schemas do not declare them. Preserve both kinds and their names.
+    await db.collection('users').createIndex({ username: 1 }, { unique: true, background: true });
+    await db.collection('users').createIndex({ uniqueID: 1 }, { name: 'legacy_user_identity' });
+    await db.collection('files').createIndex({ uniqueID: 1 }, { unique: true, background: true });
+    await db.collection('files').createIndex({ uploaderID: 1, fileName: 1, _id: 1 }, { name: 'legacy_file_names' });
+    const indexes = {};
+    for (const collection of ['users', 'files']) {
+      indexes[collection] = (await db.collection(collection).listIndexes().toArray()).map(canonical);
+    }
     await writeFile(path.join(root, accounts[0].uniqueID, 'untracked.bin'), Buffer.from('untracked-fixture'));
     await writeFile(path.join(root, 'expected-bson.json'), JSON.stringify({
-      users: users.map(canonical), files: files.map(canonical),
+      users: users.map(canonical), files: files.map(canonical), collections: collections.map(canonical), indexes,
     }));
     console.log(JSON.stringify({ accounts, files: files.map(f => ({ ...f, _id: f._id.toHexString() })) }));
   } else if (action === 'verify') {
     const expected = JSON.parse(await readFile(path.join(root, 'expected-bson.json')));
     for (const collection of ['users', 'files']) {
+      const indexes = await db.collection(collection).listIndexes().toArray();
+      for (const original of expected.indexes[collection]) {
+        const before = BSON.EJSON.parse(original, { relaxed: false });
+        const after = indexes.find(index => index.name === before.name);
+        if (!after || canonical(after) !== original) {
+          throw new Error(`Legacy index changed: ${collection}.${before.name}`);
+        }
+      }
       for (const original of expected[collection]) {
         const before = BSON.EJSON.parse(original, { relaxed: false });
         const after = await db.collection(collection).findOne({ _id: before._id }, { promoteValues: false });
@@ -81,7 +110,20 @@ try {
         }
       }
     }
+    // Recovery tests rename a valid ID explicitly, then restore the original
+    // title. Unknown fields, malformed records, and BSON types stay intact.
+    for (const original of expected.collections) {
+      const before = BSON.EJSON.parse(original, { relaxed: false });
+      const after = await db.collection('collections').findOne({ _id: before._id }, { promoteValues: false });
+      if (!after) throw new Error('Original collection document was removed');
+      for (const key of Object.keys(before)) {
+        if (canonical(after[key]) !== canonical(before[key])) throw new Error(`Original collection field changed: ${key}`);
+      }
+    }
     console.log(JSON.stringify({ preserved: true }));
+  } else if (action === 'restore-collection-title') {
+    await db.collection('collections').updateOne({ ownerID: accounts[0].uniqueID, id: 'fixture-recoverable-title' }, { $set: { title: '' } });
+    console.log(JSON.stringify({ restored: true }));
   } else if (action === 'clone-file') {
     const original = await db.collection('files').findOne({ uniqueID: process.argv[5] });
     if (!original || original.uploaderID !== 'fixture-owner') throw new Error('Clone requires owned fixture file');

@@ -75,6 +75,7 @@ export interface ExplorerPreferences {
   pageSize: number;
   q: string;
   categories: Category[];
+  uncollected: boolean;
   minSize: string;
   maxSize: string;
   from: string;
@@ -87,6 +88,7 @@ export const defaultPreferences: ExplorerPreferences = {
   pageSize: 25,
   q: "",
   categories: [],
+  uncollected: false,
   minSize: "",
   maxSize: "",
   from: "",

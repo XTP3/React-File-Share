@@ -13,17 +13,33 @@ import (
 )
 
 func (a *App) ownedCollection(ctx context.Context, owner, id string) (bson.M, error) {
+	if !validCollectionID(id) {
+		return nil, mongo.ErrNoDocuments
+	}
 	var c bson.M
 	e := a.DB.Collection("collections").FindOne(ctx, bson.M{"ownerID": owner, "id": id}).Decode(&c)
 	return c, e
 }
 func validTitle(s string) bool { return strings.TrimSpace(s) != "" && len(s) <= 200 }
+
+// These IDs must be addressable and must not collide with virtual library views.
+func validCollectionID(id string) bool {
+	return safeName(id) && strings.TrimSpace(id) == id && id != "all" && id != "uncollected"
+}
 func (a *App) collectionJSON(ctx context.Context, owner string, c bson.M) (map[string]any, error) {
-	s, e := a.getStats(ctx, owner, str(c, "id"), false)
+	id := str(c, "id")
+	if !validCollectionID(id) {
+		return nil, mongo.ErrNoDocuments
+	}
+	title := str(c, "title")
+	if !validTitle(title) {
+		title = "Untitled collection"
+	}
+	s, e := a.getStats(ctx, owner, id, false)
 	if e != nil {
 		return nil, e
 	}
-	return map[string]any{"id": c["id"], "title": c["title"], "createdAt": c["createdAt"], "updatedAt": c["updatedAt"], "fileCount": s.TotalFiles, "totalBytes": s.TotalBytes}, nil
+	return map[string]any{"id": id, "title": title, "createdAt": c["createdAt"], "updatedAt": c["updatedAt"], "fileCount": s.TotalFiles, "totalBytes": s.TotalBytes}, nil
 }
 func (a *App) collections(w http.ResponseWriter, r *http.Request) {
 	owner := who(r).Owner
@@ -60,6 +76,11 @@ func (a *App) collections(w http.ResponseWriter, r *http.Request) {
 	}
 	items := []any{}
 	for _, c := range cs {
+		// Preserve malformed legacy records for inspection, but never pass an
+		// absent ID to getStats: its empty ID intentionally means global storage.
+		if !validCollectionID(str(c, "id")) {
+			continue
+		}
 		out, e := a.collectionJSON(r.Context(), owner, c)
 		if e != nil {
 			fail(w, 503, "collection statistics unavailable")

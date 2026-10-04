@@ -92,6 +92,14 @@ describe("API contract", () => {
     ).not.toThrow();
     expect(bytes(1024)).toBe("1 KB");
   });
+  it("persists the uncollected filter and never replaces an active collection scope", () => {
+    const preferences = { ...defaultPreferences, uncollected: true };
+    savePreferences("owner", "all", preferences);
+    expect(readPreferences("owner", "all").uncollected).toBe(true);
+    expect(readPreferences("other", "all").uncollected).toBe(false);
+    expect(new URLSearchParams(fileQuery(preferences, 1, "all")).get("collectionId")).toBe("uncollected");
+    expect(new URLSearchParams(fileQuery(preferences, 1, "my-collection")).get("collectionId")).toBe("my-collection");
+  });
 });
 describe("isolated validated preferences", () => {
   it("scopes each account and stable collection independently", () => {

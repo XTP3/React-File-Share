@@ -2,6 +2,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -25,17 +26,18 @@ import (
 )
 
 type App struct {
-	Version  string
-	Config   config.Config
-	DB       *mongo.Database
-	client   *mongo.Client
-	root     *os.Root
-	lock     *flock.Flock
-	mutation sync.Mutex
-	rateMu   sync.Mutex
-	rates    map[string]rateEntry
-	statsMu  sync.Mutex
-	stats    map[string]cachedStats
+	Version    string
+	Config     config.Config
+	DB         *mongo.Database
+	client     *mongo.Client
+	root       *os.Root
+	lock       *flock.Flock
+	mutation   sync.Mutex
+	rateMu     sync.Mutex
+	rates      map[string]rateEntry
+	statsMu    sync.Mutex
+	stats      map[string]cachedStats
+	thumbnails thumbnailCache
 }
 
 func New(ctx context.Context, c config.Config) (*App, error) {
@@ -67,7 +69,7 @@ func New(ctx context.Context, c config.Config) (*App, error) {
 		cl.Disconnect(context.Background())
 		return nil, e
 	}
-	a := &App{Version: "2.0.0", Config: c, DB: cl.Database(cs.Database), client: cl, root: root, stats: map[string]cachedStats{}, rates: map[string]rateEntry{}}
+	a := &App{Version: "2.1.1", Config: c, DB: cl.Database(cs.Database), client: cl, root: root, stats: map[string]cachedStats{}, rates: map[string]rateEntry{}}
 	if info, err := a.root.Lstat(".fileshare.lock"); err == nil && (!info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0) {
 		a.Close(context.Background())
 		return nil, errors.New("unsafe runtime lock")
@@ -127,6 +129,36 @@ func (a *App) indexes(ctx context.Context) error {
 		"sessions":               {{Keys: bson.D{{Key: "expiresAt", Value: 1}}, Options: options.Index().SetExpireAfterSeconds(0)}, {Keys: bson.D{{Key: "ownerID", Value: 1}}}},
 	}
 	for name, models := range sets {
+		// These are lookup indexes, not new constraints. Deployments may already
+		// have unique or custom-named versions; keep their definitions intact.
+		// V2-owned unique and TTL indexes below still use strict creation.
+		if name == "users" || name == "files" {
+			existing, e := a.DB.Collection(name).Indexes().ListSpecifications(ctx)
+			if e != nil {
+				return fmt.Errorf("list indexes %s: %w", name, e)
+			}
+			missing := make([]mongo.IndexModel, 0, len(models))
+			for _, model := range models {
+				keys, e := bson.Marshal(model.Keys)
+				if e != nil {
+					return fmt.Errorf("index keys %s: %w", name, e)
+				}
+				found := false
+				for _, index := range existing {
+					if bytes.Equal(keys, index.KeysDocument) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					missing = append(missing, model)
+				}
+			}
+			models = missing
+		}
+		if len(models) == 0 {
+			continue
+		}
 		if _, e := a.DB.Collection(name).Indexes().CreateMany(ctx, models); e != nil {
 			return fmt.Errorf("index %s: %w", name, e)
 		}
@@ -148,6 +180,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v2/account/password", a.private(a.password))
 	mux.HandleFunc("POST /api/account/change", a.private(a.password))
 	mux.HandleFunc("GET /api/v2/files", a.private(a.list))
+	mux.HandleFunc("GET /api/v2/files/{id}/thumbnail", a.private(a.thumbnail))
 	mux.HandleFunc("POST /f", a.private(a.legacyList))
 	mux.HandleFunc("GET /f/s/{query}", a.private(a.legacySearch))
 	mux.HandleFunc("POST /api/v2/files/upload", a.private(a.upload))

@@ -8,6 +8,7 @@ require (
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78
 	go.mongodb.org/mongo-driver/v2 v2.3.1
 	golang.org/x/crypto v0.42.0
+	golang.org/x/image v0.31.0
 )
 
 require (
