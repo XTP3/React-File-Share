@@ -80,6 +80,7 @@ import {
 } from "@/components/ui/table";
 import { api, bytes, fileQuery, formatDate, shareURL } from "@/lib/api";
 import { readPreferences, savePreferences } from "@/lib/preferences";
+import { useFileSelection } from "@/lib/use-file-selection";
 import {
   categories,
   categoryLabels,
@@ -190,6 +191,7 @@ export function Explorer({
   onRemove,
   onPreview,
   onRefresh,
+  completedSelection,
 }: {
   user: string;
   collection: string;
@@ -201,11 +203,12 @@ export function Explorer({
   onRemove: (files: SharedFile[]) => void;
   onPreview: (file: SharedFile) => void;
   onRefresh: () => void;
+  completedSelection?: { ids: string[]; scope?: string } | null;
 }) {
   const [prefs, setPrefs] = useState(() => readPreferences(user, collection));
   const [search, setSearch] = useState(prefs.q);
   const [page, setPage] = useState(1);
-  const [selected, setSelected] = useState(new Set<string>());
+  const { selected, selectedFiles, toggle, setVisible, clear, remove, pageState } = useFileSelection();
   const [filters, setFilters] = useState(false);
   const mobile = useMobileList();
   const debounce = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -221,8 +224,8 @@ export function Explorer({
     staleTime: 15000,
   });
   useEffect(() => {
-    setSelected(new Set());
-  }, [query]);
+    if (completedSelection && (!completedSelection.scope || completedSelection.scope === collection)) remove(completedSelection.ids);
+  }, [completedSelection, collection, remove]);
   useEffect(() => {
     if (
       files.data &&
@@ -244,16 +247,9 @@ export function Explorer({
     clearTimeout(debounce.current);
     patch({ q: search });
   }
-  function toggle(id: string) {
-    setSelected((current) => {
-      const next = new Set(current);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
   const items = files.data?.items || [];
-  const selectedFiles = items.filter((x) => selected.has(x.uniqueID));
+  const selectionPending = files.isPlaceholderData || files.isError;
+  const offPageCount = selected.size - items.filter((file) => selected.has(file.uniqueID)).length;
   const activeFilters =
     prefs.categories.length +
     Number(!!prefs.minSize) +
@@ -485,11 +481,26 @@ export function Explorer({
           </Button>
         </div>
       )}
+      {items.length > 0 && (
+        <div className="page-selection">
+          <Label>
+            <Checkbox
+              aria-label="Select all files on this page"
+              checked={pageState(items)}
+              disabled={selectionPending}
+              onCheckedChange={(checked) => setVisible(items, checked === true)}
+            />
+            Select all on this page
+          </Label>
+          <span className="muted">{items.length} on this page</span>
+        </div>
+      )}
       {selected.size > 0 && (
         <div className="selection-bar">
           <span>
             <Check />
             {selected.size} selected
+            {offPageCount > 0 && <span className="muted">({offPageCount} on other pages or outside these filters)</span>}
           </span>
           <Button
             size="sm"
@@ -521,7 +532,7 @@ export function Explorer({
             variant="ghost"
             size="icon-sm"
             aria-label="Clear file selection"
-            onClick={() => setSelected(new Set())}
+            onClick={clear}
           >
             <X />
           </Button>
@@ -589,7 +600,8 @@ export function Explorer({
                       <Checkbox
                         aria-label={`Select ${file.fileName}`}
                         checked={selected.has(file.uniqueID)}
-                        onCheckedChange={() => toggle(file.uniqueID)}
+                        disabled={selectionPending}
+                        onCheckedChange={() => toggle(file)}
                       />
                       {menu(file)}
                     </div>
@@ -616,19 +628,7 @@ export function Explorer({
                 <TableHeader>
                   <TableRow>
                     <TableHead className="checkbox-cell">
-                      <Checkbox
-                        aria-label="Select all files on this page"
-                        checked={
-                          items.length > 0 && selected.size === items.length
-                        }
-                        onCheckedChange={(checked) =>
-                          setSelected(
-                            checked
-                              ? new Set(items.map((x) => x.uniqueID))
-                              : new Set(),
-                          )
-                        }
-                      />
+                      <span className="sr-only">Selection</span>
                     </TableHead>
                     <TableHead>Name</TableHead>
                     <TableHead>Type</TableHead>
@@ -651,7 +651,8 @@ export function Explorer({
                         <Checkbox
                           aria-label={`Select ${file.fileName}`}
                           checked={selected.has(file.uniqueID)}
-                          onCheckedChange={() => toggle(file.uniqueID)}
+                          disabled={selectionPending}
+                          onCheckedChange={() => toggle(file)}
                         />
                       </TableCell>
                       <TableCell>
@@ -690,7 +691,8 @@ export function Explorer({
                     <Checkbox
                       aria-label={`Select ${file.fileName}`}
                       checked={selected.has(file.uniqueID)}
-                      onCheckedChange={() => toggle(file.uniqueID)}
+                      disabled={selectionPending}
+                      onCheckedChange={() => toggle(file)}
                     />
                     <Button
                       variant="ghost"

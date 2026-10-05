@@ -3,6 +3,7 @@ import { mkdir, writeFile, readFile, access } from 'node:fs/promises';
 import path from 'node:path';
 import { chromium } from 'playwright-core';
 import { baseURL, creationCode, password, changedPassword, photo, audioFixture, api, seedFiles, eventually, visible, noHorizontalOverflow, waitForList } from './support.mjs';
+import { readableEditableInputs, selectionRegression } from './selection.mjs';
 
 const artifacts = path.resolve(process.env.ARTIFACTS_DIR || 'artifacts');
 await mkdir(artifacts, { recursive: true });
@@ -146,6 +147,7 @@ try {
     await page.setViewportSize({ width: 390, height: 844 });
     await centeredAuth('Create Account');
     await noHorizontalOverflow(page);
+    await readableEditableInputs(page, 'Mobile account creation');
     await screenshot('mobile-register-dark');
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.getByLabel('Username', { exact: true }).fill(username);
@@ -160,6 +162,7 @@ try {
     await screenshot('desktop-login-dark');
     await page.setViewportSize({ width: 390, height: 844 });
     await centeredAuth('Login');
+    await readableEditableInputs(page, 'Mobile login');
     await screenshot('mobile-login-dark');
     await page.setViewportSize({ width: 1440, height: 1000 });
     await login();
@@ -267,6 +270,10 @@ try {
     await screenshot('desktop-files-light');
     await page.getByRole('button', { name: 'Change theme', exact: true }).click();
     await page.getByRole('menuitem', { name: 'Dark', exact: true }).click();
+  });
+
+  await check('Cross-page selection, library picker membership, and mobile input sizing', async () => {
+    await selectionRegression({ page, context, session, screenshot });
   });
 
   await check('Create collection, bulk assignment, independent preferences, and nondestructive removal', async () => {

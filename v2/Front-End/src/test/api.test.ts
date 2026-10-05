@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { api, fileQuery, formatDate, bytes, setCSRF } from "@/lib/api";
+import { api, fileQuery, formatDate, bytes, setCSRF, changeMembership } from "@/lib/api";
 import { defaultPreferences } from "@/lib/types";
 import {
   readPreferences,
@@ -7,6 +7,28 @@ import {
   applyTheme,
 } from "@/lib/preferences";
 describe("API contract", () => {
+  it("stops later membership batches when the picker is cancelled", async () => {
+    const controller = new AbortController();
+    const fetcher = vi.fn().mockResolvedValue(new Response("OK"));
+    vi.stubGlobal("fetch", fetcher);
+    const ids = Array.from({ length: 1001 }, (_, i) => `file-${i}`);
+    await expect(changeMembership("collection", "POST", ids, () => controller.abort(), controller.signal)).rejects.toThrow();
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(fetcher.mock.calls[0][1].signal).toBe(controller.signal);
+  });
+  it("batches cross-page memberships and only acknowledges completed batches on failure", async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response("OK"))
+      .mockResolvedValueOnce(new Response('{"error":"Temporary failure"}', { status: 503, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetcher);
+    const ids = Array.from({ length: 1001 }, (_, i) => `file-${i}`);
+    const completed = vi.fn();
+    await expect(changeMembership("collection#special", "POST", [...ids, ids[0]], completed)).rejects.toThrow("Temporary failure");
+    expect(fetcher.mock.calls[0][0]).toBe("/api/v2/collections/collection%23special/files");
+    expect(JSON.parse(fetcher.mock.calls[0][1].body).fileIds).toEqual(ids.slice(0, 1000));
+    expect(JSON.parse(fetcher.mock.calls[1][1].body).fileIds).toEqual([ids[1000]]);
+    expect(completed).toHaveBeenCalledExactlyOnceWith(ids.slice(0, 1000));
+  });
   it("accepts legacy text successes and JSON successes", async () => {
     vi.stubGlobal(
       "fetch",
