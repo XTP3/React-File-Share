@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -12,6 +12,7 @@ import {
   LogOut,
   Trash2,
   Pencil,
+  FolderPlus,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -53,13 +54,14 @@ import {
 import { Auth } from "@/features/Auth";
 import { Explorer } from "@/features/Explorer";
 import { FilePreview } from "@/features/FilePreview";
+import { LibraryPicker } from "@/features/LibraryPicker";
 import { Logo } from "@/components/Logo";
 import { readPreferences, savePreferences } from "@/lib/preferences";
 import { Storage } from "@/features/Storage";
 import { UploadQueue } from "@/features/UploadQueue";
 import { Connection } from "@/features/Connection";
 import { ThemeControl } from "@/features/ThemeControl";
-import { api, APIError, bytes, setCSRF } from "@/lib/api";
+import { api, APIError, bytes, setCSRF, changeMembership } from "@/lib/api";
 import type {
   Collection,
   Session,
@@ -79,10 +81,13 @@ function routeCollection() {
 type Action =
   | { kind: "create" }
   | { kind: "rename" | "deleteCollection"; collection: Collection }
-  | { kind: "deleteFiles" | "assign" | "remove"; files: SharedFile[] }
+  | { kind: "deleteFiles" | "assign"; files: SharedFile[] }
+  | { kind: "remove"; files: SharedFile[]; collectionId: string }
   | { kind: "password" };
 export default function App() {
   const client = useQueryClient();
+  const authGeneration = useRef(0);
+  const routeGeneration = useRef(0);
   const [session, setSession] = useState<Session | null>(null);
   const [checking, setChecking] = useState(true);
   const [authError, setAuthError] = useState("");
@@ -98,6 +103,8 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [preview, setPreview] = useState<SharedFile | null>(null);
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [completedSelection, setCompletedSelection] = useState<{ ids: string[]; scope?: string } | null>(null);
   const config = useQuery({
     queryKey: ["config"],
     queryFn: ({ signal }) => api<PublicConfig>("/config", { signal }),
@@ -146,12 +153,16 @@ export default function App() {
   }, []);
   useEffect(() => {
     const expired = () => {
+      authGeneration.current++;
+      setBusy(false);
       client.cancelQueries();
       client.clear();
       setCSRF("");
       setSession(null);
       setAction(null);
       setPreview(null);
+      setLibraryOpen(false);
+      setCompletedSelection(null);
       setUploadOpen(false);
       setUploading(false);
       setAuthError("Your session expired. Log in to continue.");
@@ -163,7 +174,11 @@ export default function App() {
   }, [client]);
   useEffect(() => {
     const navigate = () => {
+      routeGeneration.current++;
+      setAction(null);
+      setError("");
       setCollection(routeCollection());
+      setLibraryOpen(false);
       setUploadOpen(location.pathname.toLowerCase() === "/upload");
     };
     window.addEventListener("popstate", navigate);
@@ -182,13 +197,20 @@ export default function App() {
   }, [session, collection]);
 
   function login(s: Session) {
+    authGeneration.current++;
+    setAction(null);
+    setBusy(false);
     setCSRF(s.csrfToken);
     setSession(s);
     setAuthError("");
     history.replaceState({}, "", "/files");
   }
   function navigate(id: string) {
+    routeGeneration.current++;
+    setAction(null);
+    setError("");
     setCollection(id);
+    setLibraryOpen(false);
     history.pushState(
       {},
       "",
@@ -197,6 +219,10 @@ export default function App() {
     setMobileNav(false);
   }
   function begin(next: Action) {
+    if (busy) {
+      toast.info("Wait for the current operation to finish.");
+      return;
+    }
     setAction(next);
     setError("");
     setTitle("collection" in next ? next.collection.title : "");
@@ -207,11 +233,17 @@ export default function App() {
       await api("/auth/logout", { method: "POST" }).catch((e) => {
         if (!(e instanceof APIError && e.status === 401)) throw e;
       });
+      authGeneration.current++;
+      setBusy(false);
+      setAction(null);
+      setPreview(null);
       await client.cancelQueries();
       client.clear();
       setCSRF("");
       setSession(null);
       setCollection("all");
+      setLibraryOpen(false);
+      setCompletedSelection(null);
       setUploadOpen(false);
       setUploading(false);
       history.replaceState({}, "", "/Login");
@@ -224,10 +256,25 @@ export default function App() {
     if (!action) return;
     setError("");
     setBusy(true);
+    const auth = authGeneration.current;
+    const route = routeGeneration.current;
+    const currentSession = () => auth === authGeneration.current;
+    const currentDialog = () => currentSession() && route === routeGeneration.current;
+    const mutateRequest = async (path: string, options: RequestInit) => {
+      await api(path, options);
+      if (!currentSession()) throw Error("The session changed during this operation.");
+    };
+    const completed: string[] = [];
+    const finishBatch = (ids: string[]) => {
+      if (!currentSession()) throw Error("The session changed during this operation.");
+      completed.push(...ids);
+      setCompletedSelection({ ids: [...completed], scope: action.kind === "deleteFiles" ? undefined : collection });
+      invalidate();
+    };
     try {
       if (action.kind === "create" || action.kind === "rename") {
         if (!title.trim()) throw Error("Enter a collection name.");
-        await api(
+        await mutateRequest(
           action.kind === "create"
             ? "/collections"
             : "/collections/" + encodeURIComponent(action.collection.id),
@@ -242,7 +289,7 @@ export default function App() {
             : "Collection renamed",
         );
       } else if (action.kind === "deleteCollection") {
-        await api("/collections/" + encodeURIComponent(action.collection.id), { method: "DELETE" });
+        await mutateRequest("/collections/" + encodeURIComponent(action.collection.id), { method: "DELETE" });
         if (collection === action.collection.id) flushSync(() => navigate("all"));
         await client.cancelQueries({queryKey:["files",session?.user.uniqueID,action.collection.id]});
         client.removeQueries({queryKey:["files",session?.user.uniqueID,action.collection.id]});
@@ -253,37 +300,35 @@ export default function App() {
         );
       } else if (action.kind === "assign") {
         if (!target) throw Error("Choose a collection.");
-        await api("/collections/" + encodeURIComponent(target) + "/files", {
-          method: "POST",
-          body: JSON.stringify({
-            fileIds: action.files.map((f) => f.uniqueID),
-          }),
-        });
+        await changeMembership(target, "POST", action.files.map((f) => f.uniqueID), finishBatch);
         toast.success("Files added to collection");
       } else if (action.kind === "remove") {
-        await api("/collections/" + encodeURIComponent(collection) + "/files", {
-          method: "DELETE",
-          body: JSON.stringify({
-            fileIds: action.files.map((f) => f.uniqueID),
-          }),
-        });
+        await changeMembership(action.collectionId, "DELETE", action.files.map((f) => f.uniqueID), finishBatch);
         toast.success(
           "Files removed from collection. Your library still has them.",
         );
       } else if (action.kind === "deleteFiles") {
-        const outcomes = await Promise.allSettled(
-          action.files.map((f) =>
-            api("/files/" + encodeURIComponent(f.uniqueID), {
-              method: "DELETE",
-            }),
-          ),
-        );
-        invalidate();
+        const outcomes: PromiseSettledResult<unknown>[] = [];
+        // Cross-page selection can be large; keep deletion requests bounded.
+        for (let offset = 0; offset < action.files.length; offset += 8) {
+          const batch = await Promise.allSettled(
+            action.files.slice(offset, offset + 8).map((f) =>
+              api("/files/" + encodeURIComponent(f.uniqueID), { method: "DELETE" }),
+            ),
+          );
+          if (!currentSession()) return;
+          outcomes.push(...batch);
+          const expired = batch.find((result) => result.status === "rejected" && result.reason instanceof APIError && result.reason.status === 401);
+          if (expired?.status === "rejected") throw expired.reason;
+        }
+        finishBatch(action.files.filter((_, index) => outcomes[index].status === "fulfilled").map((file) => file.uniqueID));
         const failed = outcomes.filter((x) => x.status === "rejected");
-        if (failed.length)
+        if (failed.length) {
+          if (currentDialog()) setAction({ kind: "deleteFiles", files: action.files.filter((_, index) => outcomes[index].status === "rejected") });
           throw Error(
             `${failed.length} files could not be deleted. Refresh and try again.`,
           );
+        }
         toast.success(
           `${action.files.length} ${action.files.length === 1 ? "file" : "files"} deleted`,
         );
@@ -293,7 +338,7 @@ export default function App() {
           throw Error("Complete all password fields.");
         if (data.get("newPassword") !== data.get("repeatPassword"))
           throw Error("The new passwords do not match.");
-        await api("/account/password", {
+        await mutateRequest("/account/password", {
           method: "POST",
           body: JSON.stringify({
             currentPassword: data.get("currentPassword"),
@@ -301,16 +346,26 @@ export default function App() {
           }),
         });
         client.clear();
+        authGeneration.current++;
+        setBusy(false);
+        setAction(null);
         setCSRF("");
         setSession(null);
         toast.success("Password changed. Log in again.");
+        return;
       }
+      if (!currentSession()) return;
       invalidate();
-      setAction(null);
+      if (currentDialog()) setAction(null);
     } catch (e) {
+      if (!currentDialog()) return;
+      if (completed.length && (action.kind === "assign" || action.kind === "remove")) {
+        const done = new Set(completed);
+        setAction({ ...action, files: action.files.filter((file) => !done.has(file.uniqueID)) });
+      }
       setError((e as Error).message);
     } finally {
-      setBusy(false);
+      if (currentSession()) setBusy(false);
     }
   }
   async function reconcile() {
@@ -545,6 +600,10 @@ export default function App() {
                 {bytes(collectionStats.data?.totalBytes ?? current.totalBytes)}
               </span>
               <Badge variant="secondary">Private collection</Badge>
+              <Button variant="outline" size="sm" onClick={() => setLibraryOpen(true)}>
+                <FolderPlus />
+                Add from library
+              </Button>
               <Button
                 variant="ghost"
                 size="sm"
@@ -567,10 +626,11 @@ export default function App() {
                   : current?.title || "Collection files"
             }
             config={config.data}
+            completedSelection={completedSelection}
             onUpload={() => setUploadOpen(true)}
             onDelete={(files) => begin({ kind: "deleteFiles", files })}
             onAssign={(files) => begin({ kind: "assign", files })}
-            onRemove={(files) => begin({ kind: "remove", files })}
+            onRemove={(files) => begin({ kind: "remove", files, collectionId: collection })}
             onPreview={setPreview}
             onRefresh={invalidate}
           />
@@ -589,6 +649,16 @@ export default function App() {
           {nav}
         </SheetContent>
       </Sheet>
+      {libraryOpen && current && (
+        <LibraryPicker
+          key={session.user.uniqueID + ":" + current.id}
+          user={session.user.uniqueID}
+          collection={current}
+          config={config.data}
+          onClose={() => setLibraryOpen(false)}
+          onAdded={invalidate}
+        />
+      )}
       <UploadQueue
         open={uploadOpen}
         onOpenChange={setUploadOpen}

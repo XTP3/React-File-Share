@@ -14,4 +14,6 @@ The `v1/` directory preserves the original application as a compatibility refere
 
 GitHub Actions runs native Go unit tests on Linux, Windows and macOS, plus frontend, browser and legacy compatibility checks on Linux, then uploads bundles for Linux amd64/arm64, Windows amd64 and macOS amd64/arm64. Pushing a `v2.*` tag publishes those bundles and `SHA256SUMS` to a GitHub release after checks pass. Generated assets, local configuration and uploaded data are excluded from source control and release bundles.
 
+Within each library or collection view, selections persist across pagination, searches, sorting and filters. Use **Select all on this page** to select visible files, then apply bulk actions to the full selection. Collection pages also offer **Add from library**, with search, sorting, category filters and cross-page selection. Successful actions clear affected selections; cancelling preserves them. Changing collection or signing out resets selection.
+
 Licensed under the [MIT License](LICENSE).

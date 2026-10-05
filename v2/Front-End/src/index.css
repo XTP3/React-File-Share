@@ -521,6 +521,7 @@ h2 {
 .collection-summary > button {
   margin-left: auto;
 }
+.collection-summary > button + button { margin-left: 0; }
 .explorer {
   background: var(--card);
   border: 1px solid var(--border);
@@ -608,10 +609,25 @@ h2 {
 }
 .selection-bar > span {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   margin-right: auto;
   font-size: 11px;
+}
+
+.page-selection { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 24px; border-top: 1px solid var(--border); }
+.page-selection > label { min-height: 44px; gap: 10px; }
+.page-selection > .muted { font-size: 12px; }
+
+/* iOS focuses small text fields by zooming. Keep editable text at least 16px
+   on mobile/tablet, including landscape, while leaving pinch zoom available. */
+@media (max-width: 767px), (pointer: coarse) {
+  :root { --mobile-input-font-size: 16px; }
+  input[data-slot="input"], textarea[data-slot="textarea"], select {
+    font-size: var(--mobile-input-font-size) !important;
+  }
+  .page-selection { padding-inline: 16px; }
 }
 .selection-bar svg {
   width: 14px;

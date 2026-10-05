@@ -42,6 +42,28 @@ export async function api<T>(
       : (raw as T)
     : (undefined as T);
 }
+export async function changeMembership(
+  collectionId: string,
+  method: "POST" | "DELETE",
+  fileIds: string[],
+  onBatch?: (ids: string[]) => void,
+  signal?: AbortSignal,
+) {
+  const ids = [...new Set(fileIds)];
+  // Match the API's per-request limit without limiting cross-page selections.
+  for (let offset = 0; offset < ids.length; offset += 1000) {
+    signal?.throwIfAborted();
+    const batch = ids.slice(offset, offset + 1000);
+    await api("/collections/" + encodeURIComponent(collectionId) + "/files", {
+      method,
+      body: JSON.stringify({ fileIds: batch }),
+      signal,
+    });
+    signal?.throwIfAborted();
+    onBatch?.(batch);
+  }
+}
+
 export function fileQuery(
   p: ExplorerPreferences,
   page: number,
