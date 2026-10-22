@@ -7,6 +7,7 @@ V2 preserves the existing MongoDB users/files, upload paths, password hashes and
 - [Install and build v2](docs/INSTALL.md)
 - [Upgrade and roll back an existing installation](docs/UPGRADE.md)
 - [V2 development](v2/README.md)
+- [Security update and ongoing checks](docs/SECURITY.md)
 - [API contract](docs/V2-API.md) and [implementation plan](docs/V2-PLAN.md)
 - [Archived v1 source and original instructions](v1/README.md)
 

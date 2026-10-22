@@ -2,7 +2,7 @@
 
 React 19 + TypeScript + Vite, TanStack Query, and the actual shadcn Vega preset `b67f2pbcWY`. See [SHADCN-PRESET.md](SHADCN-PRESET.md) for generation provenance and token choices.
 
-Use Node 24.19.0 / npm 11:
+Use Node 24.22.1 / npm 11:
 
 ```sh
 npm ci
@@ -11,6 +11,8 @@ npm test
 npm run typecheck
 npm run build
 ```
+
+The shadcn stylesheet is vendored with its license; the CLI is not part of `npm ci`. See [preset provenance](SHADCN-PRESET.md).
 
 Development proxies `/api` and public `/f/` share links to the Go service at `127.0.0.1:8080`. Production build emits `../Back-End/www`, which Go serves on the same origin. No Node server is needed in production. The integration contract is [V2-API.md](../../docs/V2-API.md).
 

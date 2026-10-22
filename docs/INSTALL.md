@@ -10,7 +10,7 @@ sha256sum --ignore-missing -c SHA256SUMS
 
 Extract into a new application directory. Each bundle contains `fileshare` (`fileshare.exe` on Windows), `www`, `Config.example.json`, `LICENSE`, `INSTALL.md` and `UPGRADE.md`.
 
-MongoDB is an external service. Use MongoDB 7.0.16 or a compatible supported version. For a new installation, copy `Config.example.json` to a private `Config.json` and set `DATABASE_URL`, `ACCOUNT_CREATION_CODE` and `JWT_SECRET_KEY`. Choose unique random secrets. Protect this file with permissions appropriate to your service account. For an existing installation, follow UPGRADE.md and reuse its configuration, database and uploads.
+MongoDB is an external service. Use MongoDB 7.0.45 or a compatible supported version. For a new installation, copy `Config.example.json` to a private `Config.json` and set `DATABASE_URL`, `ACCOUNT_CREATION_CODE` and `JWT_SECRET_KEY`. Choose unique random secrets. Protect this file with permissions appropriate to your service account. For an existing installation, follow UPGRADE.md and reuse its configuration, database and uploads.
 
 Keep application files separate from durable data. Start on an unprivileged port, supplying explicit absolute paths:
 

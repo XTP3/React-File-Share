@@ -38,7 +38,7 @@ class PackagingTest(unittest.TestCase):
                         exe = next(x for x in bundle.getmembers() if x.name.endswith('/fileshare'))
                         self.assertEqual(exe.mode, 0o755)
                 names = {n.split('/', 1)[1] for n in names}
-                self.assertEqual(names, {'fileshare.exe' if system == 'windows' else 'fileshare', 'www/index.html', 'Config.example.json', 'LICENSE', 'INSTALL.md', 'UPGRADE.md'})
+                self.assertEqual(names, {'fileshare.exe' if system == 'windows' else 'fileshare', 'www/index.html', 'Config.example.json', 'LICENSE', 'INSTALL.md', 'UPGRADE.md', 'licenses/shadcn.LICENSE.md'})
             lines = release.checksums(root / 'out').read_text().splitlines()
             self.assertEqual(len(lines), 5)
             self.assertTrue(all(len(line.split()[0]) == 64 for line in lines))

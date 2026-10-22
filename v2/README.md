@@ -1,6 +1,6 @@
 # V2 development
 
-Use Go **1.27.1**, Node **24.19.0**, npm and MongoDB **7.0.16**. Production needs MongoDB and the compiled executable/static assets; it does not require Node.
+Use Go **1.27.3**, Node **24.22.1**, npm and MongoDB **7.0.45**. Production needs MongoDB and the compiled executable/static assets; it does not require Node.
 
 From the repository root:
 
