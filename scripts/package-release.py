@@ -26,7 +26,8 @@ def package(version, system, arch, binary, www, output):
     entries += [(f'www/{p.relative_to(www).as_posix()}', p, 0o644) for p in sorted(www.rglob('*')) if p.is_file()]
     entries += [(name, ROOT / path, 0o644) for name, path in [
         ('Config.example.json', 'v2/Back-End/Config.example.json'),
-        ('LICENSE', 'LICENSE'), ('INSTALL.md', 'docs/INSTALL.md'), ('UPGRADE.md', 'docs/UPGRADE.md')]]
+        ('LICENSE', 'LICENSE'), ('INSTALL.md', 'docs/INSTALL.md'), ('UPGRADE.md', 'docs/UPGRADE.md'),
+        ('licenses/shadcn.LICENSE.md', 'v2/Front-End/src/styles/shadcn.LICENSE.md')]]
     for _, path, _ in entries:
         if path.is_symlink() or not path.is_file():
             raise ValueError(f'release input must be a regular file: {path}')
