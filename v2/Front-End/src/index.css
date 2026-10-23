@@ -143,6 +143,12 @@
   --browser-content-min-height: 72px;
   --browser-pagination-height: 64px;
   --browser-transition-duration: 160ms;
+  --scrollbar-size: 8px;
+  --scrollbar-track: #181a1f;
+  --scrollbar-thumb: #646b78;
+  --scrollbar-thumb-hover: #7b8493;
+  --scrollbar-thumb-active: #969fad;
+  --mobile-navigation-size: 44px;
   --font-sans: "Montserrat Variable", sans-serif;
   --font-heading: "Manrope Variable", sans-serif;
   --preview-photo: var(--primary);
@@ -165,6 +171,37 @@
   --accent: #27292f;
   --border: #ffffff12;
   --muted-foreground: #a0a2ac;
+}
+/* Native scrollbars, including portal content, share the same theme tokens.
+   Radix Select otherwise hides its viewport scrollbar. */
+*,
+:root [data-radix-select-viewport] {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+/* Fall back when either standard property is missing (including older Safari). */
+@supports not ((scrollbar-width: thin) and (scrollbar-color: #000 #000)) {
+  *, :root [data-radix-select-viewport] { scrollbar-width: auto; }
+  ::-webkit-scrollbar {
+    width: var(--scrollbar-size);
+    height: var(--scrollbar-size);
+  }
+  :root [data-radix-select-viewport]::-webkit-scrollbar { display: block; }
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner { background: var(--scrollbar-track); }
+  ::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    border: 1px solid var(--scrollbar-track);
+    border-radius: var(--scrollbar-size);
+  }
+  ::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); }
+  ::-webkit-scrollbar-thumb:active { background: var(--scrollbar-thumb-active); }
+}
+@media (forced-colors: active) {
+  *, :root [data-radix-select-viewport] {
+    scrollbar-color: auto;
+    scrollbar-width: auto;
+  }
 }
 body {
   margin: 0;
@@ -400,6 +437,7 @@ h2 {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   border-bottom: 1px solid var(--border);
   background: var(--background);
 }
@@ -409,7 +447,10 @@ h2 {
   align-items: center;
   gap: 12px;
 }
+.header-left { flex: 1; min-width: 0; }
+.header-actions { flex-shrink: 0; }
 .header-breadcrumb {
+  min-width: 0;
   font-size: 11px;
   color: var(--muted-foreground);
   display: flex;
@@ -419,6 +460,9 @@ h2 {
 .header-breadcrumb strong {
   font-weight: 500;
   color: var(--foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .account-button {
   gap: 10px;
@@ -436,7 +480,8 @@ h2 {
   font-family: var(--font-heading);
   font-weight: 700;
 }
-.mobile-nav-button {
+.mobile-nav-button,
+.mobile-home-button {
   display: none !important;
 }
 .main-content {
@@ -454,7 +499,6 @@ h2 {
   min-height: 0;
   max-height: 40%;
   overflow-y: auto;
-  scrollbar-width: thin;
   overscroll-behavior: contain;
 }
 .page-heading {
@@ -542,7 +586,6 @@ h2 {
   min-height: 0;
   max-height: calc(100% - var(--browser-content-min-height) - var(--browser-pagination-height));
   overflow-y: auto;
-  scrollbar-width: thin;
 }
 .file-content {
   flex: 1;
@@ -1037,9 +1080,13 @@ h2 {
   .workspace {
     margin-left: 0;
   }
-  .mobile-nav-button {
+  .mobile-nav-button,
+  .mobile-home-button {
     display: inline-flex !important;
+    width: var(--mobile-navigation-size);
+    height: var(--mobile-navigation-size);
   }
+  .header-left { gap: 4px; }
   .app-header {
     height: 65px;
   }
@@ -1062,12 +1109,6 @@ h2 {
   .header-breadcrumb {
     gap: 8px;
     font-size: 10px;
-  }
-  .header-breadcrumb > strong {
-    max-width: 105px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
   .header-actions {
     gap: 0;
@@ -1442,7 +1483,6 @@ h2 {
 }
 @media (max-width: 600px) {
   .header-breadcrumb { font-size: 13px; }
-  .header-breadcrumb > strong { max-width: 55vw; }
   .page-heading > .page-actions { width: 100%; }
   .filter-footer { padding-inline: 20px; }
 }

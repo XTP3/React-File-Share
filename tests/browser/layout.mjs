@@ -6,6 +6,10 @@ export async function layoutRegression({ page, context, session, screenshot }) {
   const ready = () => eventually(async () => assert.equal(await list.getAttribute('aria-busy'), 'false'), 'File list finished loading');
   const pagination = page.locator('.explorer > .pagination');
   const originalViewport = page.viewportSize();
+  const scrollbar = element => {
+    const style = getComputedStyle(element);
+    return { width: style.scrollbarWidth, color: style.scrollbarColor };
+  };
   let uploaded;
   let release;
   const route = async request => { await new Promise(resolve => { release = resolve; }); await request.continue(); };
@@ -18,6 +22,13 @@ export async function layoutRegression({ page, context, session, screenshot }) {
     await visible(page.getByRole('button', { name: 'Show stats', exact: true }));
     assert.equal(await page.getByRole('region', { name: 'Storage overview', exact: true }).count(), 0, 'Stats preference survives reload');
     assert.equal(await page.locator('.workspace-footer').count(), 0);
+    const scrollStyle = await list.evaluate(scrollbar);
+    assert.equal(scrollStyle.width, 'thin');
+    assert.equal(scrollStyle.color, 'rgb(100, 107, 120) rgb(24, 26, 31)', 'File scrollbars have a visible dark thumb and track');
+    assert.deepEqual(await page.locator('html').evaluate(scrollbar), scrollStyle, 'Document and content scrollbars match');
+    await page.emulateMedia({ forcedColors: 'active' });
+    assert.deepEqual(await list.evaluate(scrollbar), { width: 'auto', color: 'auto' }, 'High-contrast mode retains system scrollbars');
+    await page.emulateMedia({ forcedColors: 'none' });
 
     for (const [width, height] of [[1440, 1000], [390, 844], [320, 568], [844, 390]]) {
       await page.setViewportSize({ width, height });
@@ -38,6 +49,15 @@ export async function layoutRegression({ page, context, session, screenshot }) {
       await screenshot(`files-viewport-${width}x${height}`);
       await list.evaluate(element => { element.scrollTop = 0; });
     }
+
+    await page.getByRole('button', { name: /^Filters/ }).click();
+    await visible(page.locator('.filter-body'));
+    assert.deepEqual(await page.locator('.filter-body').evaluate(scrollbar), scrollStyle, 'Filter portal uses the same scrollbars');
+    await page.keyboard.press('Escape');
+    await page.getByRole('combobox', { name: 'Sort files', exact: true }).click();
+    await visible(page.locator('[data-radix-select-viewport]'));
+    assert.deepEqual(await page.locator('[data-radix-select-viewport]').evaluate(scrollbar), scrollStyle, 'Select menus do not hide their scrollbar');
+    await page.keyboard.press('Escape');
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.route(pageTwo, route);

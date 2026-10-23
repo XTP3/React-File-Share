@@ -314,8 +314,9 @@ export function FilePreview({ file, onClose }: { file: SharedFile | null; onClos
               <DialogDescription>{bytes(file.fileSize)} · {file.fileType || file.category}</DialogDescription>
             </div>
             <div className="preview-window-actions">
+              {/* Keep dialog/keyboard focus without opening hover-only labels. */}
               <Tooltip disableHoverableContent>
-                <TooltipTrigger asChild>
+                <TooltipTrigger asChild onFocus={(event) => event.preventDefault()}>
               <Button className="preview-resize" variant="ghost" size="icon" aria-label={expanded || fullscreen ? "Restore preview size" : "Maximize preview"}
                 aria-pressed={expanded || fullscreen} onClick={() => {
                   if (fullscreen) void document.exitFullscreen().catch(() => {});
@@ -329,7 +330,7 @@ export function FilePreview({ file, onClose }: { file: SharedFile | null; onClos
                 </TooltipContent>
               </Tooltip>
               <Tooltip disableHoverableContent>
-                <TooltipTrigger asChild>
+                <TooltipTrigger asChild onFocus={(event) => event.preventDefault()}>
               <Button variant="ghost" size="icon" aria-label={fullscreen ? "Exit fullscreen" : "Enter fullscreen"}
                 aria-pressed={fullscreen} onClick={toggleFullscreen}>{fullscreen ? <Minimize /> : <Fullscreen />}</Button>
                 </TooltipTrigger>
@@ -338,7 +339,7 @@ export function FilePreview({ file, onClose }: { file: SharedFile | null; onClos
                 </TooltipContent>
               </Tooltip>
               <Tooltip disableHoverableContent>
-                <TooltipTrigger asChild>
+                <TooltipTrigger asChild onFocus={(event) => event.preventDefault()}>
               <Button variant="ghost" size="icon" aria-label="Close preview" onClick={closePreview}><X /></Button>
                 </TooltipTrigger>
                 <TooltipContent side="bottom" container={tooltipContainer}>Close preview</TooltipContent>

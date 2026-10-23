@@ -106,7 +106,7 @@ export default function App() {
   const [error, setError] = useState("");
   const [preview, setPreview] = useState<SharedFile | null>(null);
   const [libraryOpen, setLibraryOpen] = useState(false);
-  const [statsVisible, setStatsVisible] = useState(true);
+  const [statsVisible, setStatsVisible] = useState(false);
   const [completedSelection, setCompletedSelection] = useState<{ ids: string[]; scope?: string } | null>(null);
   const config = useQuery({
     queryKey: ["config"],
@@ -509,6 +509,15 @@ export default function App() {
       <div className="workspace">
         <header className="app-header">
           <div className="header-left">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="mobile-home-button"
+              aria-label="Go to All Files"
+              onClick={() => navigate("all")}
+            >
+              <Logo size={28} className="size-7" />
+            </Button>
             <Button
               variant="ghost"
               size="icon"
