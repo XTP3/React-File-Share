@@ -13,6 +13,8 @@ import {
   Trash2,
   Pencil,
   FolderPlus,
+  MoreHorizontal,
+  ChartNoAxesColumn,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -56,7 +58,7 @@ import { Explorer } from "@/features/Explorer";
 import { FilePreview } from "@/features/FilePreview";
 import { LibraryPicker } from "@/features/LibraryPicker";
 import { Logo } from "@/components/Logo";
-import { readPreferences, savePreferences } from "@/lib/preferences";
+import { readPreferences, savePreferences, readStatsVisible, saveStatsVisible } from "@/lib/preferences";
 import { Storage } from "@/features/Storage";
 import { UploadQueue } from "@/features/UploadQueue";
 import { Connection } from "@/features/Connection";
@@ -104,6 +106,7 @@ export default function App() {
   const [error, setError] = useState("");
   const [preview, setPreview] = useState<SharedFile | null>(null);
   const [libraryOpen, setLibraryOpen] = useState(false);
+  const [statsVisible, setStatsVisible] = useState(true);
   const [completedSelection, setCompletedSelection] = useState<{ ids: string[]; scope?: string } | null>(null);
   const config = useQuery({
     queryKey: ["config"],
@@ -143,6 +146,7 @@ export default function App() {
     api<Session>("/auth/me")
       .then((s) => {
         setCSRF(s.csrfToken);
+        setStatsVisible(readStatsVisible(s.user.uniqueID));
         setSession(s);
       })
       .catch((e) => {
@@ -201,6 +205,7 @@ export default function App() {
     setAction(null);
     setBusy(false);
     setCSRF(s.csrfToken);
+    setStatsVisible(readStatsVisible(s.user.uniqueID));
     setSession(s);
     setAuthError("");
     history.replaceState({}, "", "/files");
@@ -554,16 +559,49 @@ export default function App() {
           </div>
         </header>
         <main className="main-content">
+          <div className="workspace-overview">
           <Connection uploading={uploading} />
           <div className="page-heading">
-            <div>
+            <div className="page-title">
               <h1>{collection === "all" || collection === "uncollected" ? "Files" : current?.title || "Collection"}</h1>
+              {current && <p className="muted">
+                {collectionStats.data?.totalFiles ?? current.fileCount} files · {bytes(collectionStats.data?.totalBytes ?? current.totalBytes)}
+              </p>}
             </div>
-            <Button onClick={() => setUploadOpen(true)}>
+              {collection === "all" && <Button variant="outline" className="stats-toggle"
+                aria-expanded={statsVisible} aria-controls="library-stats"
+                onClick={() => {
+                  const visible = !statsVisible;
+                  setStatsVisible(visible);
+                  saveStatsVisible(session.user.uniqueID, visible);
+                }}>
+                <ChartNoAxesColumn />{statsVisible ? "Hide stats" : "Show stats"}
+              </Button>}
+            <div className="page-actions">
+              {current && <Button variant="outline" onClick={() => setLibraryOpen(true)}>
+                <FolderPlus />Add from library
+              </Button>}
+            <Button className="upload-button" onClick={() => setUploadOpen(true)}>
               <CloudUpload />
               Upload
             </Button>
+              {current && <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon" aria-label="Collection actions"><MoreHorizontal /></Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onSelect={() => begin({ kind: "rename", collection: current })}>
+                    <Pencil />Rename collection
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem variant="destructive" onSelect={() => begin({ kind: "deleteCollection", collection: current })}>
+                    <Trash2 />Delete collection
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>}
+            </div>
           </div>
+          {collection === "all" && <div id="library-stats" hidden={!statsVisible}>
           <Storage
             stats={stats.data}
             collectionCount={list.length}
@@ -581,6 +619,7 @@ export default function App() {
               </AlertDescription>
             </Alert>
           )}
+          </div>}
           {collections.isError && (
             <Alert>
               <AlertDescription>
@@ -591,29 +630,7 @@ export default function App() {
               </AlertDescription>
             </Alert>
           )}
-          {current && (
-            <div className="collection-summary">
-              <Folder />
-              <span>{current.title}</span>
-              <span className="muted">
-                {collectionStats.data?.totalFiles ?? current.fileCount} files ·{" "}
-                {bytes(collectionStats.data?.totalBytes ?? current.totalBytes)}
-              </span>
-              <Badge variant="secondary">Private collection</Badge>
-              <Button variant="outline" size="sm" onClick={() => setLibraryOpen(true)}>
-                <FolderPlus />
-                Add from library
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => begin({ kind: "rename", collection: current })}
-              >
-                <Pencil />
-                Rename
-              </Button>
-            </div>
-          )}
+          </div>
           <Explorer
             key={session.user.uniqueID + ":" + collection}
             user={session.user.uniqueID}
@@ -634,10 +651,6 @@ export default function App() {
             onPreview={setPreview}
             onRefresh={invalidate}
           />
-          <footer className="workspace-footer">
-            <Logo size={24} />
-            <span>Your files, simply shared.</span>
-          </footer>
         </main>
       </div>
       <Sheet open={mobileNav} onOpenChange={setMobileNav}>

@@ -4,6 +4,20 @@ import {
   type ExplorerPreferences,
 } from "./types";
 const prefix = "fileshare:v2:";
+export function readStatsVisible(user: string): boolean {
+  try {
+    return localStorage.getItem(prefix + user + ":showStats") !== "false";
+  } catch {
+    return true;
+  }
+}
+export function saveStatsVisible(user: string, visible: boolean) {
+  try {
+    localStorage.setItem(prefix + user + ":showStats", String(visible));
+  } catch {
+    /* storage can be disabled */
+  }
+}
 export function readPreferences(
   user: string,
   collection: string,

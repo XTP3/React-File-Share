@@ -26,6 +26,7 @@ import {
   Check,
   CalendarDays,
   ExternalLink,
+  Info,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -35,7 +36,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Spinner } from "@/components/ui/spinner";
+import { FileDetails } from "./FileDetails";
 import {
   Empty,
   EmptyHeader,
@@ -210,6 +212,9 @@ export function Explorer({
   const [page, setPage] = useState(1);
   const { selected, selectedFiles, toggle, setVisible, clear, remove, pageState } = useFileSelection();
   const [filters, setFilters] = useState(false);
+  const [details, setDetails] = useState<SharedFile | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const displayedQuery = useRef("");
   const mobile = useMobileList();
   const debounce = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => {
@@ -223,6 +228,13 @@ export function Explorer({
     placeholderData: keepPreviousData,
     staleTime: 15000,
   });
+  useEffect(() => {
+    // Keep the old page in place while fetching, then start new results at the top.
+    if (files.isSuccess && !files.isPlaceholderData && displayedQuery.current !== query) {
+      if (scrollRef.current) scrollRef.current.scrollTop = 0;
+      displayedQuery.current = query;
+    }
+  }, [query, files.isSuccess, files.isPlaceholderData]);
   useEffect(() => {
     if (completedSelection && (!completedSelection.scope || completedSelection.scope === collection)) remove(completedSelection.ids);
   }, [completedSelection, collection, remove]);
@@ -248,7 +260,8 @@ export function Explorer({
     patch({ q: search });
   }
   const items = files.data?.items || [];
-  const selectionPending = files.isPlaceholderData || files.isError;
+  const loading = files.isPending || files.isFetching || files.isPlaceholderData;
+  const selectionPending = loading || files.isError;
   const offPageCount = selected.size - items.filter((file) => selected.has(file.uniqueID)).length;
   const activeFilters =
     prefs.categories.length +
@@ -281,6 +294,9 @@ export function Explorer({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
+          <DropdownMenuItem onSelect={() => setDetails(file)}>
+            <Info />File details
+          </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => onPreview(file)}>
             <Eye />
             Preview
@@ -330,6 +346,7 @@ export function Explorer({
   }
   return (
     <section className="explorer" aria-label="File explorer">
+      <div className="explorer-controls">
       <div className="explorer-heading">
         <div>
           <h2>{title}</h2>
@@ -538,23 +555,21 @@ export function Explorer({
           </Button>
         </div>
       )}
+      </div>
+      <div className="file-content" data-loading={loading}>
+      <div ref={scrollRef} className="file-content-scroll" role="region" aria-label="File list" tabIndex={0}
+        aria-busy={loading} inert={loading}>
       {files.isError && (
         <Alert variant="destructive">
           <AlertDescription>
-            <span role="alert">{files.error.message}</span>
+            <span>{files.error.message}</span>
             <Button variant="outline" size="sm" onClick={() => files.refetch()}>
               Try again
             </Button>
           </AlertDescription>
         </Alert>
       )}
-      {files.isPending ? (
-        <div className="file-loading" aria-label="Loading files">
-          {Array.from({ length: 5 }, (_, i) => (
-            <Skeleton key={i} className="h-16 w-full" />
-          ))}
-        </div>
-      ) : items.length === 0 && !files.isError ? (
+      {items.length === 0 && !files.isError && !loading ? (
         <Empty className="file-empty">
           <EmptyHeader>
             <EmptyMedia variant="icon">
@@ -716,6 +731,11 @@ export function Explorer({
           )}
         </>
       )}
+      </div>
+      {loading && <div className="file-loading" role="status" aria-live="polite">
+        <Badge variant="secondary" className="[&>svg]:size-5!"><Spinner role="img" aria-hidden="true" />Loading files…</Badge>
+      </div>}
+      </div>
       <div className="pagination">
         <div className="page-size">
           <span className="muted">Show</span>
@@ -743,7 +763,7 @@ export function Explorer({
             variant="outline"
             size="icon"
             aria-label="Previous page"
-            disabled={page <= 1 || files.isPlaceholderData}
+            disabled={page <= 1 || loading}
             onClick={() => setPage((p) => p - 1)}
           >
             <ChevronLeft />
@@ -754,7 +774,7 @@ export function Explorer({
             aria-label="Next page"
             disabled={
               page >= Math.max(files.data?.totalPages || 1, 1) ||
-              files.isPlaceholderData
+              loading
             }
             onClick={() => setPage((p) => p + 1)}
           >
@@ -762,6 +782,7 @@ export function Explorer({
           </Button>
         </div>
       </div>
+      <FileDetails file={details} config={config} onClose={() => setDetails(null)} />
       <Sheet open={filters} onOpenChange={setFilters}>
         <SheetContent className="filter-sheet">
           <SheetHeader>

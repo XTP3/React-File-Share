@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import {
-  Download, ExternalLink, File, Link, LoaderCircle, Maximize, Minimize,
-  Music, Pause, Play, RotateCcw, Scan, Volume2, VolumeX, X,
+  Download, ExternalLink, File, Link, LoaderCircle, AppWindow, Minimize,
+  Music, Pause, Play, RotateCcw, Fullscreen, PanelsTopLeft, Volume2, VolumeX, X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Slider } from "@/components/ui/slider";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { bytes, shareURL } from "@/lib/api";
 import type { SharedFile } from "@/lib/types";
 import "./preview.css";
@@ -221,6 +222,11 @@ function ImagePreview({ file }: { file: SharedFile }) {
 
 export function FilePreview({ file, onClose }: { file: SharedFile | null; onClose: () => void }) {
   const viewerRef = useRef<HTMLDivElement>(null);
+  const [tooltipContainer, setTooltipContainer] = useState<HTMLDivElement | null>(null);
+  const attachViewer = useCallback((element: HTMLDivElement | null) => {
+    viewerRef.current = element;
+    setTooltipContainer(element);
+  }, []);
   const mediaRef = useRef<HTMLMediaElement | null>(null);
   const previousFocus = useRef<HTMLElement | null>(null);
   const [previousFile, setPreviousFile] = useState(file);
@@ -291,7 +297,7 @@ export function FilePreview({ file, onClose }: { file: SharedFile | null; onClos
 
   return (
     <Dialog open={!!file} onOpenChange={(open) => { if (!open) closePreview(); }}>
-      <DialogContent ref={viewerRef} className="file-preview-dialog" showCloseButton={false}
+      <DialogContent ref={attachViewer} className="file-preview-dialog" showCloseButton={false}
         data-expanded={expanded || fullscreen}
         onOpenAutoFocus={() => {
           if (document.activeElement instanceof HTMLElement && !viewerRef.current?.contains(document.activeElement))
@@ -308,16 +314,35 @@ export function FilePreview({ file, onClose }: { file: SharedFile | null; onClos
               <DialogDescription>{bytes(file.fileSize)} · {file.fileType || file.category}</DialogDescription>
             </div>
             <div className="preview-window-actions">
-              <Button variant="ghost" size="icon" aria-label={expanded || fullscreen ? "Restore preview size" : "Maximize preview"}
+              <Tooltip disableHoverableContent>
+                <TooltipTrigger asChild>
+              <Button className="preview-resize" variant="ghost" size="icon" aria-label={expanded || fullscreen ? "Restore preview size" : "Maximize preview"}
                 aria-pressed={expanded || fullscreen} onClick={() => {
                   if (fullscreen) void document.exitFullscreen().catch(() => {});
                   setExpanded(fullscreen ? false : !expanded);
                 }}>
-                {expanded || fullscreen ? <Minimize /> : <Maximize />}
+                {expanded || fullscreen ? <PanelsTopLeft /> : <AppWindow />}
               </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" container={tooltipContainer}>
+                  {expanded || fullscreen ? "Restore viewer size" : "Expand viewer to browser window"}
+                </TooltipContent>
+              </Tooltip>
+              <Tooltip disableHoverableContent>
+                <TooltipTrigger asChild>
               <Button variant="ghost" size="icon" aria-label={fullscreen ? "Exit fullscreen" : "Enter fullscreen"}
-                aria-pressed={fullscreen} onClick={toggleFullscreen}><Scan /></Button>
+                aria-pressed={fullscreen} onClick={toggleFullscreen}>{fullscreen ? <Minimize /> : <Fullscreen />}</Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" container={tooltipContainer}>
+                  {fullscreen ? "Exit device fullscreen" : "Enter device fullscreen"}
+                </TooltipContent>
+              </Tooltip>
+              <Tooltip disableHoverableContent>
+                <TooltipTrigger asChild>
               <Button variant="ghost" size="icon" aria-label="Close preview" onClick={closePreview}><X /></Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" container={tooltipContainer}>Close preview</TooltipContent>
+              </Tooltip>
             </div>
           </header>
           <div className="preview-body">
