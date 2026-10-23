@@ -185,6 +185,9 @@ try {
     await page.reload();
     await visible(page.getByRole('heading', { name: 'Files', exact: true }));
     await eventually(async () => assert.equal((await api(context.request, '/storage')).totalFiles, 33), 'Storage file count');
+    await visible(page.getByRole('button', { name: 'Show stats', exact: true }));
+    assert.equal(await page.getByRole('region', { name: 'Storage overview', exact: true }).count(), 0, 'Statistics start hidden for a new account');
+    await page.getByRole('button', { name: 'Show stats', exact: true }).click();
     await visible(page.getByRole('region', { name: 'Storage overview', exact: true }).getByText('33', { exact: true }));
     const storage = await api(context.request, '/storage');
     assert.equal(storage.totalBytes, files.reduce((sum, file) => sum + file.fileSize, 0));
@@ -321,6 +324,25 @@ try {
     await eventually(async () => assert.equal((await api(context.request, '/collections')).items[0].title, 'Browser renamed'), 'Rename preserves stable collection');
     assert.equal((await api(context.request, '/collections')).items[0].id, collection.id);
     assert.equal(await page.getByLabel('Search files', { exact: true }).inputValue(), 'browser-archive');
+    for (const width of [390, 320]) {
+      await page.setViewportSize({ width, height: 844 });
+      const home = page.getByRole('button', { name: 'Go to All Files', exact: true });
+      await visible(home);
+      const bounds = await home.boundingBox();
+      assert.ok(bounds.width >= 44 && bounds.height >= 44, 'Mobile home has a full touch target');
+      await noHorizontalOverflow(page);
+      await screenshot(`mobile-collection-header-${width}`);
+      await home.click();
+      await currentHeader('Files');
+      assert.equal(new URL(page.url()).pathname, '/files', 'The logo returns to All Files in one action');
+      assert.equal(await page.getByLabel('Search files', { exact: true }).inputValue(), '', 'Home restores main-library preferences');
+      await page.getByRole('button', { name: 'Open navigation', exact: true }).click();
+      await page.getByRole('button', { name: /^Browser renamed/ }).click();
+      await currentHeader('Browser renamed');
+      assert.equal(await page.getByLabel('Search files', { exact: true }).inputValue(), 'browser-archive', 'Collection preferences survive mobile home navigation');
+      await eventually(async () => assert.equal(await page.getByRole('dialog').count(), 0), 'Selecting a collection closes mobile navigation');
+    }
+    await page.setViewportSize({ width: 1440, height: 1000 });
     await page.getByRole('button', { name: /^All Files/ }).click();
     assert.equal(await page.getByLabel('Search files', { exact: true }).inputValue(), '');
     await page.getByRole('button', { name: /^Filters/ }).click();
@@ -406,6 +428,9 @@ try {
       await eventually(async () => assert.equal(await popup.locator('img').evaluate(image => image.naturalWidth), 1024), 'Original image URL loads in the native browser image viewer');
       await popup.close();
       await previewControlsFit();
+      assert.equal(await page.getByRole('tooltip').count(), 0, 'Opening a preview does not display a tooltip');
+      await page.getByRole('button', { name: 'Enter fullscreen', exact: true }).focus();
+      assert.equal(await page.getByRole('tooltip').count(), 0, 'Keyboard focus does not open hover-only viewer tooltips');
       await screenshot('desktop-image-preview');
       await page.getByRole('button', { name: 'Maximize preview', exact: true }).hover();
       await visible(page.getByRole('tooltip', { name: 'Expand viewer to browser window', exact: true }));
@@ -424,6 +449,7 @@ try {
         for (const file of mediaFiles) {
           await page.locator('.file-name-button').filter({ hasText: file.fileName }).click();
           await previewControlsFit();
+          assert.equal(await page.getByRole('tooltip').count(), 0, 'Reopening previews never shows an automatic tooltip');
           if (width === 390) {
             assert.equal(await page.getByRole('button', { name: 'Maximize preview', exact: true }).count(), 0, 'Already full-window mobile viewer hides redundant resize action');
             const box = await page.locator('.file-preview-dialog').boundingBox();
@@ -661,7 +687,8 @@ try {
     const secondary = `${username}-other`;
     await api(context.request, '/auth/register', { method: 'POST', data: { username: secondary, password, creationCode }, expected: 201 });
     await login(password, secondary);
-    await page.getByRole('button', { name: 'Hide stats', exact: true }).click();
+    await visible(page.getByRole('button', { name: 'Show stats', exact: true }));
+    assert.equal(await page.getByRole('region', { name: 'Storage overview', exact: true }).count(), 0, 'A second account also defaults to hidden statistics');
     assert.equal(await page.getByRole('combobox', { name: 'Files per page', exact: true }).textContent(), '25');
     assert.ok((await page.getByRole('combobox', { name: 'Sort files', exact: true }).textContent()).includes('Newest first'));
     assert.equal(await page.getByLabel('Search files', { exact: true }).inputValue(), '');

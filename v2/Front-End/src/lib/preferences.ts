@@ -6,9 +6,9 @@ import {
 const prefix = "fileshare:v2:";
 export function readStatsVisible(user: string): boolean {
   try {
-    return localStorage.getItem(prefix + user + ":showStats") !== "false";
+    return localStorage.getItem(prefix + user + ":showStats") === "true";
   } catch {
-    return true;
+    return false;
   }
 }
 export function saveStatsVisible(user: string, visible: boolean) {
