@@ -109,6 +109,40 @@ it("debounces search, cancels stale requests and resets pagination", async () =>
   fireEvent.submit(input.closest("form")!);
   await waitFor(() => expect(requests.some((r) => r.q === "new")).toBe(true));
   expect(requests.find((r) => r.q === "old")!.signal.aborted).toBe(true);
-  expect(screen.getByText("No files found")).toBeVisible();
+  expect(await screen.findByText("No files found")).toBeVisible();
+  client.clear();
+});
+
+it("shows loading for initial and replacement results, blocks stale selection, and recovers after an error", async () => {
+  let respond!: (response: Response) => void;
+  const fetch = vi.fn(() => new Promise<Response>((resolve) => { respond = resolve; }));
+  vi.stubGlobal("fetch", fetch);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(<QueryClientProvider client={client}>
+    <Explorer user="user" collection="all" title="All Files" onUpload={vi.fn()}
+      onDelete={vi.fn()} onAssign={vi.fn()} onRemove={vi.fn()} onPreview={vi.fn()} onRefresh={vi.fn()} />
+  </QueryClientProvider>);
+  const result = (name: string) => new Response(JSON.stringify({
+    items: [{ uniqueID: name, fileName: name, category: "document", fileSize: 1, timeOfUpload: 1 }],
+    total: 26, totalPages: 2, pageSize: 25,
+  }), { headers: { "content-type": "application/json" } });
+  expect(screen.getByRole("status")).toHaveTextContent("Loading files");
+  await act(async () => respond(result("first.txt")));
+  await screen.findByRole("checkbox", { name: "Select first.txt" });
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+  expect(screen.getByRole("status")).toHaveTextContent("Loading files");
+  expect(screen.getByRole("checkbox", { name: "Select all files on this page" })).toBeDisabled();
+  expect(document.querySelector(".file-content-scroll")).toHaveAttribute("inert");
+  await act(async () => respond(new Response(JSON.stringify({ error: "Temporarily unavailable" }), { status: 503 })));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Temporarily unavailable");
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(3));
+  await act(async () => respond(result("next.txt")));
+  expect(await screen.findByRole("checkbox", { name: "Select next.txt" })).toBeEnabled();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(document.querySelector(".file-content-scroll")).not.toHaveAttribute("inert");
   client.clear();
 });
