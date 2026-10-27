@@ -16,8 +16,11 @@ const browser = await chromium.launch({ executablePath: chromiumPath, headless: 
 const context = await browser.newContext({ baseURL, viewport: { width: 1440, height: 1000 }, acceptDownloads: true });
 const page = await context.newPage();
 page.setDefaultTimeout(10000);
+let expectedUploadConflict = false;
 page.on('pageerror', error => report.browserErrors.push(error.message));
 page.on('console', message => {
+  if (expectedUploadConflict && /status of 409/.test(message.text()) &&
+      message.location().url === new URL('/api/v2/files/upload', baseURL).href) return;
   if (message.type() === 'error' && !/Failed to load resource:.*(401|ERR_INTERNET_DISCONNECTED)/.test(message.text())) report.browserErrors.push(`${message.text()} (${message.location().url})`);
 });
 page.on('response', response => { if (response.status() >= 400 && response.status() !== 401) report.httpErrors.push({ url: response.url(), status: response.status() }); });
@@ -541,9 +544,11 @@ try {
       ...batch, { name: 'queue-added.txt', mimeType: 'text/plain', buffer: Buffer.from('Existing filename must fail') },
     ]);
     await page.setViewportSize({ width: 390, height: 844 });
+    expectedUploadConflict = true;
     await page.getByRole('button', { name: 'Upload 12 files', exact: true }).click();
     await visible(page.getByRole('status').filter({ hasText: '11 uploaded · 1 failed' }));
     await visible(page.getByText('a file with that name already exists', { exact: true }));
+    expectedUploadConflict = false;
     const savedBatch = (await api(context.request, '/files?q=queue-batch-&pageSize=100')).items;
     assert.equal(savedBatch.length, 11, 'Every accepted file in a concurrent batch is saved');
     await screenshot('mobile-upload-batch-results');
@@ -604,6 +609,7 @@ try {
     await page.keyboard.press('Escape');
     await page.getByRole('button', { name: 'Upload', exact: true }).first().click();
     await noHorizontalOverflow(page);
+    await page.locator('input[type=file]').setInputFiles({ name: 'queue-photo.png', mimeType: 'image/png', buffer: photo });
     await screenshot('mobile-upload-dark');
     const closeSize = await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).boundingBox();
     report.mobileTypography.dialogCloseWidth = closeSize.width; report.mobileTypography.dialogCloseHeight = closeSize.height;
@@ -613,6 +619,7 @@ try {
     assert.ok(removeSize.width >= 44 && removeSize.height >= 44, `Mobile queue remove needs a 44px touch target; measured ${removeSize.width}x${removeSize.height}`);
     report.mobileTypography.dialogCloseWidth = closeSize.width; report.mobileTypography.dialogCloseHeight = closeSize.height;
     report.mobileTypography.queueRemoveWidth = removeSize.width; report.mobileTypography.queueRemoveHeight = removeSize.height;
+    await page.getByRole('button', { name: 'Clear selection', exact: true }).click();
     await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
     await page.setViewportSize({ width: 1440, height: 1000 });
     await eventually(async () => assert.equal(await page.locator('.mobile-file-list').count(), 0), 'Desktop list does not mount mobile cards');
