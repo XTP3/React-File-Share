@@ -475,6 +475,9 @@ class Suite:
         route = '/api/v2/files/' + file['uniqueID'] + '/thumbnail'
         HTTP(self.base).get(route, status=401)
         self.other.get(route, status=404)
+        HTTP(self.base).get(route + '?details=1', status=401)
+        self.other.get(route + '?details=1', status=404)
+        check(self.owner.get(route + '?details=1') == {'available': True, 'reason': ''}, 'thumbnail details differ')
         browser = self.browser_login(HTTP(self.base))
         status, body, headers = browser.request('GET', route)
         check(headers.get_content_type() == 'image/png' and 'no-store' in headers['Cache-Control'], 'thumbnail MIME/privacy headers differ')
@@ -486,6 +489,10 @@ class Suite:
         self.owner.get('/api/v2/files/legacy-text-id/thumbnail', status=204)
         self.owner.get('/api/v2/files/legacy-photo-id/thumbnail', status=204)
         self.owner.get('/api/v2/files/legacy-missing-id/thumbnail', status=204)
+        details = self.owner.get('/api/v2/files/legacy-missing-id/thumbnail?details=1')
+        check(details == {'available': False, 'reason': 'Original file is unavailable'}, 'missing thumbnail reason differs')
+        _, _, headers = self.owner.request('GET', '/api/v2/files/legacy-missing-id/thumbnail', status=204)
+        check(headers['X-Thumbnail-Reason'] == details['reason'], 'fallback response lacks reason')
         mismatched = (REPO / 'v2/Back-End/internal/app/testdata/webp-small-canvas-large-frame.webp').read_bytes()
         webp = self.owner.upload([('mismatched.webp', mismatched, 'image/webp')])['files'][0]
         self.owner.get('/api/v2/files/' + webp['uniqueID'] + '/thumbnail', status=204)
