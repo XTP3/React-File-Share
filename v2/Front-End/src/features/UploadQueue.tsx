@@ -176,125 +176,127 @@ export function UploadQueue({
           aria-label="Choose files"
           onChange={(e) => e.target.files && add(e.target.files)}
         />
-        <Card
-          className={`dropzone ${dragging ? "dragging" : ""}`}
-          onDragOver={(e) => {
-            e.preventDefault();
-            setDragging(true);
-          }}
-          onDragLeave={() => setDragging(false)}
-          onDrop={(e) => {
-            e.preventDefault();
-            setDragging(false);
-            add(e.dataTransfer.files);
-          }}
-        >
-          <CardContent>
-            <CloudUpload size={32} />
-            <p>Drop your files here</p>
-            <span className="muted">
-              or choose from your device · {bytes(maxSize)} per file
-            </span>
-            <Button variant="outline" onClick={() => input.current?.click()}>
-              <Plus />
-              {items.length ? "Add more files" : "Choose files"}
-            </Button>
-          </CardContent>
-        </Card>
-        {duplicates.size > 0 && (
-          <Alert variant="destructive">
-            <AlertDescription>
-              Some filenames repeat. Remove duplicates before uploading.
-            </AlertDescription>
-          </Alert>
-        )}
-        {ready.some((x) => x.file.size > maxSize) && (
-          <Alert variant="destructive">
-            <AlertDescription>
-              A file exceeds the {bytes(maxSize)} upload limit. Remove it to
-              continue.
-            </AlertDescription>
-          </Alert>
-        )}
-        <div className="upload-items" aria-label="Upload selection">
-          {items.map((item) => (
-            <Card key={item.id} className="upload-item">
-              <CardContent>
-                <div className="queue-thumbnail">
-                  {item.url ? <img src={item.url} alt="" /> : <FileIcon />}
-                </div>
-                <div className="queue-info">
-                  <p title={item.file.name}>{item.file.name}</p>
-                  <span className="muted">
-                    {bytes(item.file.size)} · {item.file.type || "File"}
-                  </span>
-                  {(item.status === "uploading" ||
-                    item.status === "queued") && (
-                    <Progress
-                      value={item.progress}
-                      aria-label={`Upload progress ${item.file.name}`}
-                    />
-                  )}
-                  <div>
-                    {item.status === "done" ? (
-                      <Badge variant="secondary">
-                        <Check />
-                        Uploaded
-                      </Badge>
-                    ) : item.error ? (
-                      <span className="text-destructive" role="status">
-                        {item.error}
-                      </span>
-                    ) : item.status === "uploading" ? (
-                      <span className="muted">{item.progress}% uploaded</span>
-                    ) : item.status === "queued" ? (
-                      <span className="muted">Waiting…</span>
-                    ) : null}
+        <div className="upload-body">
+          <Card
+            className={`dropzone ${dragging ? "dragging" : ""}`}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDragging(true);
+            }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setDragging(false);
+              add(e.dataTransfer.files);
+            }}
+          >
+            <CardContent>
+              <CloudUpload size={32} />
+              <p>Drop your files here</p>
+              <span className="muted">
+                or choose from your device · {bytes(maxSize)} per file
+              </span>
+              <Button variant="outline" onClick={() => input.current?.click()}>
+                <Plus />
+                {items.length ? "Add more files" : "Choose files"}
+              </Button>
+            </CardContent>
+          </Card>
+          {duplicates.size > 0 && (
+            <Alert variant="destructive">
+              <AlertDescription>
+                Some filenames repeat. Remove duplicates before uploading.
+              </AlertDescription>
+            </Alert>
+          )}
+          {ready.some((x) => x.file.size > maxSize) && (
+            <Alert variant="destructive">
+              <AlertDescription>
+                A file exceeds the {bytes(maxSize)} upload limit. Remove it to
+                continue.
+              </AlertDescription>
+            </Alert>
+          )}
+          <div className="upload-items" aria-label="Upload selection">
+            {items.map((item) => (
+              <Card key={item.id} className="upload-item">
+                <CardContent>
+                  <div className="queue-thumbnail">
+                    {item.url ? <img src={item.url} alt="" /> : <FileIcon />}
                   </div>
-                </div>
-                {item.status === "uploading" || item.status === "queued" ? (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    aria-label={`Cancel ${item.file.name}`}
-                    onClick={() => cancel(item)}
-                  >
-                    <Square />
-                  </Button>
-                ) : (
-                  <>
-                    {(item.status === "error" ||
-                      item.status === "cancelled") && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label={`Retry ${item.file.name}`}
-                        disabled={invalid || !navigator.onLine}
-                        onClick={() =>
-                          update(item.id, {
-                            status: "queued",
-                            progress: 0,
-                            error: undefined,
-                            collection: item.collection || collection,
-                          })
-                        }
-                      >
-                        <RotateCcw />
-                      </Button>
+                  <div className="queue-info">
+                    <p title={item.file.name}>{item.file.name}</p>
+                    <span className="muted">
+                      {bytes(item.file.size)} · {item.file.type || "File"}
+                    </span>
+                    {(item.status === "uploading" ||
+                      item.status === "queued") && (
+                      <Progress
+                        value={item.progress}
+                        aria-label={`Upload progress ${item.file.name}`}
+                      />
                     )}
+                    <div>
+                      {item.status === "done" ? (
+                        <Badge variant="secondary">
+                          <Check />
+                          Uploaded
+                        </Badge>
+                      ) : item.error ? (
+                        <span className="text-destructive" role="status">
+                          {item.error}
+                        </span>
+                      ) : item.status === "uploading" ? (
+                        <span className="muted">{item.progress}% uploaded</span>
+                      ) : item.status === "queued" ? (
+                        <span className="muted">Waiting…</span>
+                      ) : null}
+                    </div>
+                  </div>
+                  {item.status === "uploading" || item.status === "queued" ? (
                     <Button
                       variant="ghost"
                       size="icon"
-                      aria-label={`Remove ${item.file.name}`}
-                      onClick={() => remove(item.id)}
+                      aria-label={`Cancel ${item.file.name}`}
+                      onClick={() => cancel(item)}
                     >
-                      <X />
+                      <Square />
                     </Button>
-                  </>
-                )}
-              </CardContent>
-            </Card>
-          ))}
+                  ) : (
+                    <>
+                      {(item.status === "error" ||
+                        item.status === "cancelled") && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label={`Retry ${item.file.name}`}
+                          disabled={invalid || !navigator.onLine}
+                          onClick={() =>
+                            update(item.id, {
+                              status: "queued",
+                              progress: 0,
+                              error: undefined,
+                              collection: item.collection || collection,
+                            })
+                          }
+                        >
+                          <RotateCcw />
+                        </Button>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label={`Remove ${item.file.name}`}
+                        onClick={() => remove(item.id)}
+                      >
+                        <X />
+                      </Button>
+                    </>
+                  )}
+                </CardContent>
+              </Card>
+            ))}
+          </div>
         </div>
         <div className="upload-footer">
           <span className="muted">

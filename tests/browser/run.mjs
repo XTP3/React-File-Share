@@ -5,6 +5,7 @@ import { chromium } from 'playwright-core';
 import { baseURL, creationCode, password, changedPassword, photo, audioFixture, api, seedFiles, eventually, visible, noHorizontalOverflow, waitForList } from './support.mjs';
 import { readableEditableInputs, selectionRegression } from './selection.mjs';
 import { layoutRegression } from './layout.mjs';
+import { uploadLayoutRegression } from './upload-layout.mjs';
 
 const artifacts = path.resolve(process.env.ARTIFACTS_DIR || 'artifacts');
 await mkdir(artifacts, { recursive: true });
@@ -508,6 +509,7 @@ try {
 
   await check('Local upload preview supports remove/add before real transfer', async () => {
     await page.getByRole('button', { name: 'Upload', exact: true }).first().click();
+    await uploadLayoutRegression({ page, screenshot });
     await page.locator('input[type=file]').setInputFiles([
       { name: 'queue-photo.png', mimeType: 'image/png', buffer: photo },
       { name: 'queue-remove.txt', mimeType: 'text/plain', buffer: Buffer.from('Remove this before upload') },

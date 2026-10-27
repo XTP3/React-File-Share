@@ -76,9 +76,13 @@ func New(ctx context.Context, c config.Config) (*App, error) {
 	}
 	a.lock = flock.New(filepath.Join(c.UploadsDir, ".fileshare.lock"))
 	locked, e := a.lock.TryLock()
-	if e != nil || !locked {
+	if e != nil {
 		a.Close(context.Background())
-		return nil, errors.New("uploads directory is already in use")
+		return nil, fmt.Errorf("lock uploads directory %q: %w", c.UploadsDir, e)
+	}
+	if !locked {
+		a.Close(context.Background())
+		return nil, fmt.Errorf("uploads directory %q is already in use by another process", c.UploadsDir)
 	}
 	for _, dir := range []string{".staging", ".trash"} {
 		if info, err := a.root.Lstat(dir); err == nil && (!info.IsDir() || info.Mode()&os.ModeSymlink != 0) {

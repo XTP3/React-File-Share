@@ -945,6 +945,26 @@ h2 {
 .upload-dialog {
   width: min(680px, calc(100vw - 2rem)) !important;
   max-width: 680px !important;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.upload-dialog > [data-slot="dialog-header"],
+.upload-footer,
+.upload-hint {
+  flex-shrink: 0;
+}
+.upload-body {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.upload-body > * {
+  flex-shrink: 0;
 }
 .dropzone {
   border: 1px dashed var(--border);
@@ -981,8 +1001,9 @@ h2 {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  max-height: 34dvh;
-  overflow-y: auto;
+}
+.upload-item {
+  flex-shrink: 0;
 }
 .upload-item [data-slot="card-content"] {
   display: flex;
@@ -1012,12 +1033,14 @@ h2 {
 .queue-info {
   flex: 1;
   min-width: 0;
+  overflow-wrap: anywhere;
 }
 .queue-info p {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   font-size: 12px;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
 }
 .queue-info > span {
   font-size: 9px;
@@ -1298,16 +1321,17 @@ h2 {
   }
   .upload-footer > div {
     width: 100%;
-    justify-content: space-between;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .upload-footer button {
     font-size: 11px;
+    height: auto;
+    white-space: normal;
+    padding-block: 8px;
   }
   .dropzone [data-slot="card-content"] {
     padding: 18px 12px;
-  }
-  .upload-items {
-    max-height: 30dvh;
   }
 
   .auth-theme {
