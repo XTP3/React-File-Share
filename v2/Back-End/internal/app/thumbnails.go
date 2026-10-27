@@ -24,11 +24,21 @@ import (
 
 const (
 	thumbnailSide         = 384
-	thumbnailInputBytes   = 20 << 20
-	thumbnailPixels       = 12_000_000
+	thumbnailInputBytes   = 64 << 20
+	thumbnailPixels       = 50_000_000
 	thumbnailCacheBytes   = 16 << 20
 	thumbnailCacheEntries = 128
-	thumbnailDecoders     = 2
+	thumbnailDecoders     = 1
+)
+
+// Serialize decoding: a full-resolution camera image can require hundreds of
+// MiB, especially progressive JPEG or 16-bit PNG. Header limits apply first.
+var (
+	errThumbnailDimensions = errors.New("Image exceeds the 50 megapixel or 16384-pixel side limit")
+	errThumbnailSize       = errors.New("Image exceeds the 64 MiB preview limit")
+	errThumbnailFormat     = errors.New("Image format is unsupported or its header is damaged")
+	errThumbnailDecode     = errors.New("Image could not be decoded")
+	errThumbnailMissing    = errors.New("Original file is unavailable")
 )
 
 // Bodies are cached only inside this process, after authorization. Each hit
@@ -36,6 +46,7 @@ const (
 type thumbnailEntry struct {
 	info os.FileInfo
 	body []byte
+	err  error
 	used uint64
 }
 type thumbnailCache struct {
@@ -56,24 +67,24 @@ func (c *thumbnailCache) init() {
 func sameThumbnailSource(a, b os.FileInfo) bool {
 	return os.SameFile(a, b) && a.Size() == b.Size() && a.ModTime().Equal(b.ModTime())
 }
-func (c *thumbnailCache) get(path string, info os.FileInfo) ([]byte, bool) {
+func (c *thumbnailCache) get(path string, info os.FileInfo) ([]byte, error, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e, ok := c.entries[path]
 	if !ok {
-		return nil, false
+		return nil, nil, false
 	}
 	if !sameThumbnailSource(e.info, info) {
 		c.bytes -= len(e.body)
 		delete(c.entries, path)
-		return nil, false
+		return nil, nil, false
 	}
 	c.tick++
 	e.used = c.tick
 	c.entries[path] = e
-	return e.body, true
+	return e.body, e.err, true
 }
-func (c *thumbnailCache) put(path string, info os.FileInfo, body []byte) {
+func (c *thumbnailCache) put(path string, info os.FileInfo, body []byte, reason error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if e, ok := c.entries[path]; ok {
@@ -95,7 +106,7 @@ func (c *thumbnailCache) put(path string, info os.FileInfo, body []byte) {
 		delete(c.entries, oldest)
 	}
 	c.tick++
-	c.entries[path] = thumbnailEntry{info: info, body: body, used: c.tick}
+	c.entries[path] = thumbnailEntry{info: info, body: body, err: reason, used: c.tick}
 	c.bytes += len(body)
 }
 
@@ -164,18 +175,24 @@ func boundedWebP(reader io.Reader, config image.Config) bool {
 func makeThumbnail(ctx context.Context, source io.ReadSeeker) ([]byte, error) {
 	read := func() io.Reader { return thumbnailReader{ctx, io.LimitReader(source, thumbnailInputBytes)} }
 	config, format, e := image.DecodeConfig(read())
-	if e != nil || !thumbnailDimensions(config.Width, config.Height) {
+	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
+	if e != nil {
+		return nil, errThumbnailFormat
+	}
+	if !thumbnailDimensions(config.Width, config.Height) {
+		return nil, errThumbnailDimensions
+	}
 	if format != "jpeg" && format != "png" && format != "gif" && format != "webp" {
-		return nil, nil
+		return nil, errThumbnailFormat
 	}
 	if _, e = source.Seek(0, io.SeekStart); e != nil {
 		return nil, e
 	}
 	if format == "webp" {
 		if !boundedWebP(read(), config) {
-			return nil, ctx.Err()
+			return nil, errThumbnailDecode
 		}
 		if _, e = source.Seek(0, io.SeekStart); e != nil {
 			return nil, e
@@ -183,7 +200,10 @@ func makeThumbnail(ctx context.Context, source io.ReadSeeker) ([]byte, error) {
 	}
 	src, _, e := image.Decode(read())
 	if e != nil {
-		return nil, ctx.Err()
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, errThumbnailDecode
 	}
 	if e = ctx.Err(); e != nil {
 		return nil, e
@@ -219,25 +239,28 @@ func makeThumbnail(ctx context.Context, source io.ReadSeeker) ([]byte, error) {
 func (a *App) loadThumbnail(ctx context.Context, owner, name string) ([]byte, error) {
 	path, e := a.safePath(owner, name, false)
 	if e != nil {
-		return nil, nil
+		return nil, errThumbnailMissing
 	}
 	f, e := a.root.Open(path)
 	if e != nil {
-		return nil, nil
+		return nil, errThumbnailMissing
 	}
 	defer f.Close()
 	info, e := f.Stat()
 	if e != nil || !info.Mode().IsRegular() {
-		return nil, nil
+		return nil, errThumbnailMissing
 	}
 	c := &a.thumbnails
 	c.init()
-	if body, ok := c.get(path, info); ok {
-		return body, ctx.Err()
+	if body, reason, ok := c.get(path, info); ok {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return body, reason
 	}
 	if info.Size() > thumbnailInputBytes {
-		c.put(path, info, nil)
-		return nil, nil
+		c.put(path, info, nil, errThumbnailSize)
+		return nil, errThumbnailSize
 	}
 	select {
 	case c.slots <- struct{}{}:
@@ -246,20 +269,23 @@ func (a *App) loadThumbnail(ctx context.Context, owner, name string) ([]byte, er
 	}
 	defer func() { <-c.slots }()
 	// Requests queued behind a decoder can reuse its completed result.
-	if body, ok := c.get(path, info); ok {
-		return body, ctx.Err()
+	if body, reason, ok := c.get(path, info); ok {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return body, reason
 	}
-	body, e := makeThumbnail(ctx, f)
-	if e != nil {
-		return nil, e
+	body, reason := makeThumbnail(ctx, f)
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
 	}
 	// Do not publish a stale decode if a replacement or deletion raced it.
 	current, e := a.root.Lstat(path)
 	if e != nil || !sameThumbnailSource(info, current) {
-		return nil, nil
+		return nil, errThumbnailMissing
 	}
-	c.put(path, info, body)
-	return body, nil
+	c.put(path, info, body, reason)
+	return body, reason
 }
 func (a *App) thumbnail(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "private, no-store")
@@ -278,10 +304,28 @@ func (a *App) thumbnail(w http.ResponseWriter, r *http.Request) {
 	if r.Context().Err() != nil {
 		return
 	}
+	if r.URL.Query().Get("details") == "1" {
+		reason := thumbnailReason(e)
+		reply(w, 200, map[string]any{"available": len(body) > 0 && e == nil, "reason": reason})
+		return
+	}
 	if e != nil || len(body) == 0 {
+		w.Header().Set("X-Thumbnail-Reason", thumbnailReason(e))
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	w.Header().Set("Content-Type", "image/png")
 	w.Write(body)
+}
+
+func thumbnailReason(err error) string {
+	if err == nil {
+		return ""
+	}
+	for _, known := range []error{errThumbnailDimensions, errThumbnailSize, errThumbnailFormat, errThumbnailDecode, errThumbnailMissing} {
+		if errors.Is(err, known) {
+			return known.Error()
+		}
+	}
+	return "Preview could not be generated"
 }

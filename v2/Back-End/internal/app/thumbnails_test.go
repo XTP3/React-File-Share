@@ -131,7 +131,7 @@ func TestWebPActualFrameBoundBeforeDecode(t *testing.T) {
 	}
 	reader := &countedImage{Reader: bytes.NewReader(malformed)}
 	body, e := makeThumbnail(context.Background(), reader)
-	if e != nil || len(body) != 0 || reader.seeks != 1 {
+	if !errors.Is(e, errThumbnailDecode) || len(body) != 0 || reader.seeks != 1 {
 		t.Fatalf("mismatch reached full decode: bytes=%d seeks=%d error=%v", len(body), reader.seeks, e)
 	}
 	// Lossy VP8 headers must be checked independently, too.
@@ -166,7 +166,7 @@ func TestThumbnailLimitsCancellationAndCacheIdentity(t *testing.T) {
 	if cfg, _, e := image.DecodeConfig(bytes.NewReader(oversizeHeader)); e != nil || cfg.Width != 12000 {
 		t.Fatalf("invalid test fixture: %#v %v", cfg, e)
 	}
-	if body, e := makeThumbnail(context.Background(), configOnlyImage{bytes.NewReader(oversizeHeader)}); e != nil || len(body) != 0 {
+	if body, e := makeThumbnail(context.Background(), configOnlyImage{bytes.NewReader(oversizeHeader)}); !errors.Is(e, errThumbnailDimensions) || len(body) != 0 {
 		t.Fatal("oversized header decoded", e)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -238,32 +238,30 @@ func TestThumbnailLimitsCancellationAndCacheIdentity(t *testing.T) {
 		t.Fatal("replacement reused thumbnail")
 	}
 	root.Remove(path)
-	if body, e := a.loadThumbnail(context.Background(), "owner", "image.png"); e != nil || len(body) != 0 {
+	if body, e := a.loadThumbnail(context.Background(), "owner", "image.png"); !errors.Is(e, errThumbnailMissing) || len(body) != 0 {
 		t.Fatal("deleted source served cached image")
 	}
 	f, _ = root.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0600)
 	f.Truncate(thumbnailInputBytes + 1)
 	f.Close()
-	if body, e := a.loadThumbnail(context.Background(), "owner", "image.png"); e != nil || len(body) != 0 {
+	if body, e := a.loadThumbnail(context.Background(), "owner", "image.png"); !errors.Is(e, errThumbnailSize) || len(body) != 0 {
 		t.Fatal("oversize source decoded")
 	}
-	a.thumbnails.slots <- struct{}{}
 	a.thumbnails.slots <- struct{}{}
 	write(255)
 	if _, e := a.loadThumbnail(ctx, "owner", "image.png"); e != context.Canceled {
 		t.Fatal("cancelled queue accepted", e)
 	}
 	<-a.thumbnails.slots
-	<-a.thumbnails.slots
 	current, _ := root.Lstat(path)
 	for i := 0; i < thumbnailCacheEntries+10; i++ {
-		a.thumbnails.put(strconv.Itoa(i), current, []byte{1})
+		a.thumbnails.put(strconv.Itoa(i), current, []byte{1}, nil)
 	}
 	if len(a.thumbnails.entries) != thumbnailCacheEntries || a.thumbnails.bytes > thumbnailCacheBytes {
 		t.Fatal("cache entry limit exceeded")
 	}
 	for i := 0; i < 5; i++ {
-		a.thumbnails.put("large"+strconv.Itoa(i), current, make([]byte, thumbnailCacheBytes/3))
+		a.thumbnails.put("large"+strconv.Itoa(i), current, make([]byte, thumbnailCacheBytes/3), nil)
 	}
 	if a.thumbnails.bytes > thumbnailCacheBytes {
 		t.Fatal("cache byte limit exceeded")
@@ -298,5 +296,51 @@ func TestThumbnailSmallImagesAndGIFCanvas(t *testing.T) {
 	_, _, _, a = out.At(0, 0).RGBA()
 	if a != 0 {
 		t.Fatal("transparent GIF canvas lost")
+	}
+}
+
+func TestCameraResolutionThumbnails(t *testing.T) {
+	for _, size := range [][2]int{{4032, 3024}, {5712, 4284}, {8064, 6048}} {
+		t.Run(strconv.Itoa(size[0]), func(t *testing.T) {
+			var source bytes.Buffer
+			if err := jpeg.Encode(&source, image.NewGray(image.Rect(0, 0, size[0], size[1])), nil); err != nil {
+				t.Fatal(err)
+			}
+			original := append([]byte(nil), source.Bytes()...)
+			body, err := makeThumbnail(context.Background(), bytes.NewReader(original))
+			if err != nil {
+				t.Fatal(err)
+			}
+			config, err := png.DecodeConfig(bytes.NewReader(body))
+			if err != nil || config.Width != 384 || config.Height != 288 {
+				t.Fatalf("camera thumbnail: %v %v", config, err)
+			}
+			if !bytes.Equal(original, source.Bytes()) {
+				t.Fatal("original changed")
+			}
+		})
+	}
+	if thumbnailDimensions(10000, 5001) {
+		t.Fatal("accepted over pixel budget")
+	}
+}
+func TestThumbnailFailureCache(t *testing.T) {
+	root, err := os.OpenRoot(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	root.Mkdir("owner", 0700)
+	f, _ := root.Create("owner/broken.jpeg")
+	f.Write([]byte("not a jpeg"))
+	f.Close()
+	app := &App{root: root}
+	for i := 0; i < 2; i++ {
+		if _, err := app.loadThumbnail(context.Background(), "owner", "broken.jpeg"); !errors.Is(err, errThumbnailFormat) {
+			t.Fatal(err)
+		}
+	}
+	if len(app.thumbnails.entries) != 1 {
+		t.Fatal("failure not cached")
 	}
 }
