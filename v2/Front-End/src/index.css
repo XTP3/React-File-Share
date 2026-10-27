@@ -1061,13 +1061,15 @@ h2 {
   border-top: 1px solid var(--border);
   padding-top: 16px;
 }
-.upload-footer > span {
+.upload-summary > span {
   font-size: 10px;
 }
-.upload-footer > div {
+.upload-footer > div:not(.upload-summary) {
   display: flex;
   gap: 6px;
 }
+.upload-summary { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.upload-summary [data-slot="badge"] { white-space: normal; height: auto; }
 .upload-hint {
   font-size: 10px;
 }
@@ -1319,7 +1321,7 @@ h2 {
     flex-direction: column;
     align-items: flex-start;
   }
-  .upload-footer > div {
+  .upload-footer > div:not(.upload-summary) {
     width: 100%;
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));

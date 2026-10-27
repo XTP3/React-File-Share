@@ -56,6 +56,8 @@ export function UploadQueue({
     (x) => x.status === "uploading" || x.status === "queued",
   );
   const ready = items.filter((x) => x.status === "ready");
+  const uploaded = items.filter((x) => x.status === "done").length;
+  const failed = items.filter((x) => x.status === "error" || x.status === "cancelled").length;
   const duplicates = new Set(
     items
       .filter((x, i) =>
@@ -247,7 +249,7 @@ export function UploadQueue({
                           {item.error}
                         </span>
                       ) : item.status === "uploading" ? (
-                        <span className="muted">{item.progress}% uploaded</span>
+                        <span className="muted">{item.progress >= 100 ? "Waiting for server confirmation…" : `${item.progress}% transferred`}</span>
                       ) : item.status === "queued" ? (
                         <span className="muted">Waiting…</span>
                       ) : null}
@@ -299,10 +301,17 @@ export function UploadQueue({
           </div>
         </div>
         <div className="upload-footer">
-          <span className="muted">
-            {items.length} files ·{" "}
-            {bytes(items.reduce((sum, x) => sum + x.file.size, 0))}
-          </span>
+          <div className="upload-summary">
+            <span className="muted">
+              {items.length} files ·{" "}
+              {bytes(items.reduce((sum, x) => sum + x.file.size, 0))}
+            </span>
+            {(active || uploaded > 0 || failed > 0) && (
+              <Badge variant="secondary" role="status" aria-live="polite">
+                {uploaded} uploaded · {failed} failed{active ? " · In progress" : ""}
+              </Badge>
+            )}
+          </div>
           <div>
             <Button variant="ghost" onClick={clear} disabled={!items.length}>
               Clear selection

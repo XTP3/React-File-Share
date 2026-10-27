@@ -135,7 +135,7 @@ export function upload(
       signal.removeEventListener("abort", abort);
       if (xhr.status >= 200 && xhr.status < 300) resolve();
       else {
-        let message = "Upload failed";
+        let message = `Upload failed (HTTP ${xhr.status})`;
         try {
           message = JSON.parse(xhr.responseText).error || message;
         } catch {

@@ -532,6 +532,24 @@ try {
     await page.getByRole('button', { name: 'Upload 2 files', exact: true }).click();
     await eventually(async () => assert.equal((await api(context.request, '/files')).total, 35), 'Real transfer');
     assert.equal((await api(context.request, '/files?q=queue-remove')).total, 0);
+    await visible(page.getByRole('status').filter({ hasText: '2 uploaded · 0 failed' }));
+    await page.getByRole('button', { name: 'Clear selection', exact: true }).click();
+    const batch = Array.from({ length: 11 }, (_, i) => ({
+      name: `queue-batch-${i}.txt`, mimeType: 'text/plain', buffer: Buffer.alloc(2500000, 'x'),
+    }));
+    await page.locator('input[type=file]').setInputFiles([
+      ...batch, { name: 'queue-added.txt', mimeType: 'text/plain', buffer: Buffer.from('Existing filename must fail') },
+    ]);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByRole('button', { name: 'Upload 12 files', exact: true }).click();
+    await visible(page.getByRole('status').filter({ hasText: '11 uploaded · 1 failed' }));
+    await visible(page.getByText('a file with that name already exists', { exact: true }));
+    const savedBatch = (await api(context.request, '/files?q=queue-batch-&pageSize=100')).items;
+    assert.equal(savedBatch.length, 11, 'Every accepted file in a concurrent batch is saved');
+    await screenshot('mobile-upload-batch-results');
+    for (const file of savedBatch) await api(context.request, `/files/${file.uniqueID}`, { method: 'DELETE', csrfToken: session.csrfToken });
+    await page.getByRole('button', { name: 'Clear selection', exact: true }).click();
+    await page.setViewportSize({ width: 1440, height: 1000 });
   });
 
   await check('Public downloads and mobile navigation have no horizontal overflow', async () => {
