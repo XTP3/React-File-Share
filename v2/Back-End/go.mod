@@ -1,6 +1,6 @@
 module github.com/XTP3/React-File-Share/v2
 
-go 1.27.3
+go 1.27.4
 
 require (
 	github.com/gofrs/flock v0.12.1
@@ -12,7 +12,7 @@ require (
 )
 
 require (
-	github.com/klauspost/compress v1.20.1 // indirect
+	github.com/klauspost/compress v1.20.2 // indirect
 	github.com/xdg-go/pbkdf2 v1.0.0 // indirect
 	github.com/xdg-go/scram v1.2.0 // indirect
 	github.com/xdg-go/stringprep v1.0.4 // indirect

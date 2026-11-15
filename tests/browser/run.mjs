@@ -6,6 +6,8 @@ import { baseURL, creationCode, password, changedPassword, photo, audioFixture, 
 import { readableEditableInputs, selectionRegression } from './selection.mjs';
 import { layoutRegression } from './layout.mjs';
 import { uploadLayoutRegression } from './upload-layout.mjs';
+import { bulkPreviewRegression } from './bulk-preview.mjs';
+import { previewMediaNavigationRegression } from './preview-more.mjs';
 
 const artifacts = path.resolve(process.env.ARTIFACTS_DIR || 'artifacts');
 await mkdir(artifacts, { recursive: true });
@@ -177,8 +179,11 @@ try {
     assert.equal(await page.getByRole('button', { name: 'Create collection', exact: true }).count(), 1, 'One plus button creates collections');
     assert.equal(await page.locator('.page-heading p').count(), 0, 'Files heading has no subtitle');
     await visible(page.getByRole('heading', { name: 'All Files', exact: true, level: 2 }));
+    // Removing the login form leaves the browser's sequential-navigation start
+    // point engine-dependent. Start on a known control and verify real tab order.
+    await page.getByRole('button', { name: /^All Files/ }).focus();
     await page.keyboard.press('Tab');
-    assert.ok(await page.evaluate(() => document.activeElement !== document.body), 'Keyboard focus must reach a control');
+    assert.ok(await page.getByRole('button', { name: 'Create collection', exact: true }).evaluate(element => element === document.activeElement), 'Tab reaches the next enabled navigation control');
     await noHorizontalOverflow(page);
     await screenshot('desktop-empty-dark');
   });
@@ -286,6 +291,9 @@ try {
 
   await check('Cross-page selection, library picker membership, and mobile input sizing', async () => {
     await selectionRegression({ page, context, session, screenshot });
+  });
+  await check('Ordered bulk downloads, Shift ranges, row original links and preview navigation', async () => {
+    await bulkPreviewRegression({ page, context, session, screenshot });
   });
 
   await check('Create collection, bulk assignment, independent preferences, and nondestructive removal', async () => {
@@ -448,6 +456,7 @@ try {
       await page.getByRole('button', { name: 'Restore preview size', exact: true }).click();
       await previewFullscreen();
       await page.getByRole('button', { name: 'Close preview', exact: true }).click();
+      await previewMediaNavigationRegression({ page, context, session, screenshot, mediaFiles });
       for (const [width, height] of [[1440, 1000], [390, 844], [844, 390]]) {
         await page.setViewportSize({ width, height });
         for (const file of mediaFiles) {

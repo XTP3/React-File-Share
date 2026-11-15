@@ -6,6 +6,7 @@ import concurrent.futures
 import hashlib
 import hmac
 import http.cookiejar
+import io
 import json
 import os
 from pathlib import Path
@@ -20,6 +21,7 @@ import urllib.request
 import uuid
 import struct
 import zlib
+import zipfile
 
 REPO = Path(__file__).resolve().parents[1]
 SECRET = 'synthetic-integration-jwt-secret-no-user-data'
@@ -205,6 +207,62 @@ class Suite:
         check(self.owner.get('/f/d/' + duplicate) == b'shared-path-bytes', 'deleting one legacy reference broke another public link')
         self.owner.request('DELETE', '/api/v2/files/' + duplicate)
         check(not (self.root / 'fixture-owner/reference-delete.txt').exists(), 'final reference deletion left physical file')
+
+    def bulk_downloads(self):
+        browser = self.browser_login(HTTP(self.base))
+        ids = ['legacy-unicode-id', 'legacy-text-id']
+        request = {'fileIds': ids}
+        HTTP(self.base).post('/api/v2/downloads', request, status=401)
+        browser.post('/api/v2/downloads', request, csrf=False, status=403)
+        browser.post('/api/v2/downloads', request, csrf=False, headers={'X-CSRF-Token': 'invalid'}, status=403)
+        browser.post('/api/v2/downloads', {'fileIds': []}, status=400)
+        browser.post('/api/v2/downloads', {'fileIds': ['../escape']}, status=400)
+        for client, selected in [(self.other, ids), (browser, ['unknown']), (browser, ['legacy-missing-id'])]:
+            client.post('/api/v2/downloads', {'fileIds': selected}, status=404)
+        browser.get('/api/v2/downloads/unknown/archive', status=404)
+        prefix = 'synthetic-expired.0'
+        signature = base64.urlsafe_b64encode(hmac.new(SECRET.encode(), ('download:fixture-owner:' + prefix).encode(), hashlib.sha256).digest()).rstrip(b'=').decode()
+        expired = '/api/v2/downloads/' + prefix + '.' + signature + '/archive'
+        browser.get(expired, status=410)
+        self.other.get(expired, status=404)
+        file = self.owner.upload([('bulk-source.txt', b'original-bulk-bytes', 'text/plain')])['files'][0]
+        duplicate = fixture('clone-file', self.db, self.root, file['uniqueID'])['uniqueID']
+        try:
+            ids = ['legacy-unicode-id', file['uniqueID'], duplicate, 'legacy-text-id', file['uniqueID']]
+            ticket = browser.post('/api/v2/downloads', {'fileIds': ids}, status=201)
+            path = '/api/v2/downloads/' + ticket['id'] + '/archive'
+            check(ticket['downloadUrl'] == path and 290000 <= ticket['expiresAt'] - time.time() * 1000 <= 300000, 'ticket shape/lifetime differs')
+            HTTP(self.base).get(path, status=401)
+            self.other.get(path, status=404)
+            browser.request('HEAD', path)
+            _, body, headers = browser.request('GET', path)
+            check(headers.get_content_type() == 'application/zip' and 'attachment' in headers['Content-Disposition'], 'ZIP download headers differ')
+            check('no-store' in headers['Cache-Control'], 'private archive was cacheable')
+            with zipfile.ZipFile(io.BytesIO(body)) as archive:
+                # Resolve exact original names from owned records instead of inferring names from their display text.
+                all_files = {item['uniqueID']: item for item in self.listing(pageSize=100)['items']}
+                expected = [all_files[item]['fileName'] for item in ['legacy-unicode-id', file['uniqueID'], 'legacy-text-id']]
+                check(archive.namelist() == expected, 'ZIP order/filename dedup differs')
+                for info, source_id in zip(archive.infolist(), ['legacy-unicode-id', file['uniqueID'], 'legacy-text-id']):
+                    original = self.owner.get('/f/d/' + source_id)
+                    check(info.compress_type == zipfile.ZIP_STORED and archive.read(info) == original, 'ZIP source bytes/method differ')
+            browser.get(path, status=404)
+            check(self.owner.get('/f/d/' + file['uniqueID']) == b'original-bulk-bytes', 'ZIP modified an original')
+            # A ticket cannot silently substitute a source replaced after preparation.
+            pending = browser.post('/api/v2/downloads', {'fileIds': [file['uniqueID']]}, status=201)
+            original_path = self.root / 'fixture-owner/bulk-source.txt'
+            backup_path = self.root / 'fixture-owner/bulk-source.old'
+            original_path.rename(backup_path)
+            try:
+                original_path.write_bytes(b'replacement-bulk-bytes')
+                browser.get(pending['downloadUrl'], status=404)
+            finally:
+                original_path.unlink()
+                backup_path.rename(original_path)
+            browser.get(pending['downloadUrl'])
+        finally:
+            self.owner.request('DELETE', '/api/v2/files/' + file['uniqueID'])
+            self.owner.request('DELETE', '/api/v2/files/' + duplicate)
 
     def inline_security(self):
         for name, content, mime in [('hostile.html', b'<script>document.cookie</script>', 'text/html'),
@@ -649,7 +707,7 @@ def main():
                       'second process must reject shared uploads root with runtime lock')
 
             suite = Suite(base, uploads, database, restart_backend if process else None, probe_runtime_lock if process else None)
-            for name in ('config', 'legacy_auth', 'sessions', 'legacy_files', 'downloads', 'pagination', 'filters',
+            for name in ('config', 'legacy_auth', 'sessions', 'legacy_files', 'downloads', 'bulk_downloads', 'pagination', 'filters',
                          'rejected_uploads', 'successful_uploads', 'concurrent_duplicates', 'cancellation', 'interrupted_process',
                          'stale_journal_preserves_replacement', 'runtime_lock',
                          'duplicate_reference_delete', 'inline_security', 'disk_failures', 'database_failure',

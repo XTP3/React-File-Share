@@ -24,6 +24,8 @@ Production serves a client-side React build through Go. It has no React Server C
 
 ## Ongoing checks
 
+V2.3.1 additionally uses Go 1.27.4 and `klauspost/compress` 1.20.2 for GO-2026-6859 and GO-2026-6865, plus patched glob/minimatch build dependencies. The build-only deepmerge dependency has no published upstream fix for GHSA-gcqx-w48m-w2h4; the documented [local MIT-licensed patch](../v2/Front-End/vendor/deepmerge-safe/README.md) prevents prototype poisoning and includes exploit regressions. This preserves the existing PWA toolchain and keeps dependency audits enabled. Replace the local patch with a verified upstream fix when available.
+
 The main build workflow runs `govulncheck` and npm audits for the frontend and test-fixture lockfiles before packaging. Any reported reachable Go vulnerability or npm audit failure blocks release bundles. A separate workflow repeats these checks weekly after the workflow reaches the repository's default branch, and supports manual dispatch. New vendor advisories still require review because vulnerability databases can lag.
 
 The Go database flags the unused `golang.org/x/crypto/openpgp` package (GO-2026-5932) at module level. The app uses bcrypt from that module and does not import OpenPGP; the source scan has no vulnerable call path. The archived `v1/` reference code is excluded from v2 builds and these checks; its dependencies are not a supported production runtime.

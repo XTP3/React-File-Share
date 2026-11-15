@@ -1,7 +1,7 @@
 {
   "name": "react-file-share-v2",
   "private": true,
-  "version": "2.2.6",
+  "version": "2.3.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -42,10 +42,16 @@
     "typescript": "6.0.3",
     "vite": "8.3.5",
     "vite-plugin-pwa": "2.0.0",
-    "vitest": "5.0.3"
+    "vitest": "5.0.3",
+    "deepmerge": "file:vendor/deepmerge-safe"
   },
   "engines": {
     "node": "24.x",
     "npm": "11.x"
+  },
+  "overrides": {
+    "deepmerge": "$deepmerge",
+    "glob": "14.0.6",
+    "minimatch": "11.0.8"
   }
 }

@@ -38,6 +38,10 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Spinner } from "@/components/ui/spinner";
 import { FileDetails } from "./FileDetails";
+import { BulkDownloadDialog } from "./BulkDownloadDialog";
+import { useCopyLinks } from "./useCopyLinks";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import type { PreviewContext } from "@/lib/preview-context";
 import {
   Empty,
   EmptyHeader,
@@ -203,14 +207,16 @@ export function Explorer({
   onDelete: (files: SharedFile[]) => void;
   onAssign: (files: SharedFile[]) => void;
   onRemove: (files: SharedFile[]) => void;
-  onPreview: (file: SharedFile) => void;
+  onPreview: (file: SharedFile, context: PreviewContext) => void;
   onRefresh: () => void;
   completedSelection?: { ids: string[]; scope?: string } | null;
 }) {
   const [prefs, setPrefs] = useState(() => readPreferences(user, collection));
   const [search, setSearch] = useState(prefs.q);
   const [page, setPage] = useState(1);
-  const { selected, selectedFiles, toggle, setVisible, clear, remove, pageState } = useFileSelection();
+  const { selected, selectedFiles, toggleRange, resetAnchor, setVisible, clear, remove, pageState } = useFileSelection();
+  const [downloadFiles, setDownloadFiles] = useState<SharedFile[] | null>(null);
+  const { copyLinks, dialog: copyLinksDialog } = useCopyLinks();
   const [filters, setFilters] = useState(false);
   const [details, setDetails] = useState<SharedFile | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -222,6 +228,7 @@ export function Explorer({
   }, [user, collection, prefs]);
   useEffect(() => () => clearTimeout(debounce.current), []);
   const query = fileQuery(prefs, page, collection);
+  useEffect(resetAnchor, [query, resetAnchor]);
   const files = useQuery({
     queryKey: ["files", user, collection, query],
     queryFn: ({ signal }) => api<Page>("/files?" + query, { signal }),
@@ -281,8 +288,26 @@ export function Explorer({
       );
     }
   }
+  function preview(file: SharedFile) {
+    if (selectionPending || !files.data) return;
+    onPreview(file, { user, collection, preferences: { ...prefs, categories: [...prefs.categories] }, page: files.data });
+  }
+  function select(file: SharedFile, shift: boolean) {
+    if (!selectionPending) toggleRange(file, items, query, shift);
+  }
   function menu(file: SharedFile) {
     return (
+      <div className="file-row-actions">
+      <Tooltip>
+        <TooltipTrigger asChild onFocus={(event) => event.preventDefault()}>
+          <Button variant="ghost" size="icon" asChild>
+            <a href={shareURL(file.uniqueID, "v")} target="_blank" rel="noopener noreferrer" aria-label={`Open original ${file.fileName}`}>
+              <ExternalLink />
+            </a>
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>Open original</TooltipContent>
+      </Tooltip>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
@@ -297,7 +322,7 @@ export function Explorer({
           <DropdownMenuItem onSelect={() => setDetails(file)}>
             <Info />File details
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => onPreview(file)}>
+          <DropdownMenuItem onSelect={() => preview(file)}>
             <Eye />
             Preview
           </DropdownMenuItem>
@@ -342,10 +367,13 @@ export function Explorer({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+      </div>
     );
   }
   return (
     <section className="explorer" aria-label="File explorer">
+      {downloadFiles && <BulkDownloadDialog files={downloadFiles} onClose={() => setDownloadFiles(null)} />}
+      {copyLinksDialog}
       <div className="explorer-controls">
       <div className="explorer-heading">
         <div>
@@ -505,7 +533,7 @@ export function Explorer({
               aria-label="Select all files on this page"
               checked={pageState(items)}
               disabled={selectionPending}
-              onCheckedChange={(checked) => setVisible(items, checked === true)}
+              onCheckedChange={(checked) => { resetAnchor(); setVisible(items, checked === true); }}
             />
             Select all on this page
           </Label>
@@ -519,32 +547,25 @@ export function Explorer({
             {selected.size} selected
             {offPageCount > 0 && <span className="muted">({offPageCount} on other pages or outside these filters)</span>}
           </span>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => onAssign(selectedFiles)}
-          >
-            <FolderPlus />
-            Add to collection
-          </Button>
-          {collection !== "all" && collection !== "uncollected" && (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => onRemove(selectedFiles)}
-            >
-              <FolderMinus />
-              Remove
-            </Button>
-          )}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => onDelete(selectedFiles)}
-          >
-            <Trash2 />
-            Delete
-          </Button>
+          <div className="selection-actions-desktop">
+            <Button size="sm" variant="outline" onClick={() => setDownloadFiles([...selectedFiles])}><Download />Download</Button>
+            <Button size="sm" variant="outline" onClick={() => void copyLinks(selectedFiles)}><Link />Copy links</Button>
+            <Button size="sm" variant="outline" onClick={() => onAssign(selectedFiles)}><FolderPlus />Add to collection</Button>
+            {collection !== "all" && collection !== "uncollected" && <Button size="sm" variant="outline" onClick={() => onRemove(selectedFiles)}><FolderMinus />Remove</Button>}
+            <Button variant="ghost" size="sm" onClick={() => onDelete(selectedFiles)}><Trash2 />Delete</Button>
+          </div>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button className="selection-actions-mobile" variant="outline" size="icon" aria-label="Selected file actions"><MoreHorizontal /></Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={() => setDownloadFiles([...selectedFiles])}><Download />Download</DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => void copyLinks(selectedFiles)}><Link />Copy links</DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => onAssign(selectedFiles)}><FolderPlus />Add to collection</DropdownMenuItem>
+              {collection !== "all" && collection !== "uncollected" && <DropdownMenuItem onSelect={() => onRemove(selectedFiles)}><FolderMinus />Remove</DropdownMenuItem>}
+              <DropdownMenuItem variant="destructive" onSelect={() => onDelete(selectedFiles)}><Trash2 />Delete</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button
             variant="ghost"
             size="icon-sm"
@@ -616,14 +637,15 @@ export function Explorer({
                         aria-label={`Select ${file.fileName}`}
                         checked={selected.has(file.uniqueID)}
                         disabled={selectionPending}
-                        onCheckedChange={() => toggle(file)}
+                        onClick={(event) => select(file, event.shiftKey)}
+                        onPointerDown={(event) => { if (event.shiftKey) event.preventDefault(); }}
                       />
                       {menu(file)}
                     </div>
                     <Button
                       className="grid-preview"
                       variant="ghost"
-                      onClick={() => onPreview(file)}
+                      onClick={() => preview(file)}
                       aria-label={`Preview ${file.fileName}`}
                     >
                       <FileThumbnail file={file} />
@@ -667,14 +689,15 @@ export function Explorer({
                           aria-label={`Select ${file.fileName}`}
                           checked={selected.has(file.uniqueID)}
                           disabled={selectionPending}
-                          onCheckedChange={() => toggle(file)}
+                          onClick={(event) => select(file, event.shiftKey)}
+                        onPointerDown={(event) => { if (event.shiftKey) event.preventDefault(); }}
                         />
                       </TableCell>
                       <TableCell>
                         <Button
                           variant="ghost"
                           className="file-name-button"
-                          onClick={() => onPreview(file)}
+                          onClick={() => preview(file)}
                         >
                           <FileThumbnail file={file} />
                           <span title={file.fileName}>{file.fileName}</span>
@@ -707,12 +730,13 @@ export function Explorer({
                       aria-label={`Select ${file.fileName}`}
                       checked={selected.has(file.uniqueID)}
                       disabled={selectionPending}
-                      onCheckedChange={() => toggle(file)}
+                      onClick={(event) => select(file, event.shiftKey)}
+                        onPointerDown={(event) => { if (event.shiftKey) event.preventDefault(); }}
                     />
                     <Button
                       variant="ghost"
                       className="file-name-button"
-                      onClick={() => onPreview(file)}
+                      onClick={() => preview(file)}
                     >
                       <FileThumbnail file={file} />
                       <span>

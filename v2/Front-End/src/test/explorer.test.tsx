@@ -7,8 +7,14 @@ import {
   act,
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Explorer } from "@/features/Explorer";
+import { Explorer as FileExplorer } from "@/features/Explorer";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import type { ComponentProps } from "react";
 import type { SharedFile } from "@/lib/types";
+
+function Explorer(props: ComponentProps<typeof FileExplorer>) {
+  return <TooltipProvider><FileExplorer {...props} /></TooltipProvider>;
+}
 
 it("keeps off-page selections, selects only the visible page, and submits every selected record", async () => {
   const fixtures: SharedFile[] = Array.from({ length: 26 }, (_, index) => ({

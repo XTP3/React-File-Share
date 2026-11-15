@@ -1,0 +1,7 @@
+{
+  "name": "@xtp3/deepmerge-safe",
+  "version": "4.3.1-patch.1",
+  "private": true,
+  "main": "index.cjs",
+  "license": "MIT"
+}

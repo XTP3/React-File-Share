@@ -11,7 +11,7 @@ concurrency:
   group: v2-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 env:
-  GO_VERSION: '1.27.3'
+  GO_VERSION: '1.27.4'
   NODE_VERSION: '24.22.1'
   CGO_ENABLED: '0'
 jobs:
