@@ -6,6 +6,8 @@ import { baseURL, creationCode, password, changedPassword, photo, audioFixture, 
 import { readableEditableInputs, selectionRegression } from './selection.mjs';
 import { layoutRegression } from './layout.mjs';
 import { uploadLayoutRegression } from './upload-layout.mjs';
+import { bulkPreviewRegression } from './bulk-preview.mjs';
+import { previewMediaNavigationRegression } from './preview-more.mjs';
 
 const artifacts = path.resolve(process.env.ARTIFACTS_DIR || 'artifacts');
 await mkdir(artifacts, { recursive: true });
@@ -287,6 +289,9 @@ try {
   await check('Cross-page selection, library picker membership, and mobile input sizing', async () => {
     await selectionRegression({ page, context, session, screenshot });
   });
+  await check('Ordered bulk downloads, Shift ranges, row original links and preview navigation', async () => {
+    await bulkPreviewRegression({ page, context, session, screenshot });
+  });
 
   await check('Create collection, bulk assignment, independent preferences, and nondestructive removal', async () => {
     await page.getByRole('button', { name: 'Create collection', exact: true }).click();
@@ -448,6 +453,7 @@ try {
       await page.getByRole('button', { name: 'Restore preview size', exact: true }).click();
       await previewFullscreen();
       await page.getByRole('button', { name: 'Close preview', exact: true }).click();
+      await previewMediaNavigationRegression({ page, context, session, screenshot, mediaFiles });
       for (const [width, height] of [[1440, 1000], [390, 844], [844, 390]]) {
         await page.setViewportSize({ width, height });
         for (const file of mediaFiles) {

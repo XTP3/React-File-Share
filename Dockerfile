@@ -1,14 +1,15 @@
 # syntax=docker/dockerfile:1
 # Build with: docker build -t fileshare:v2 .
-FROM node:24.19.0-alpine AS frontend
+FROM node:24.22.1-alpine AS frontend
 WORKDIR /src/v2/Front-End
 COPY v2/Front-End/package*.json ./
+COPY v2/Front-End/vendor/ ./vendor/
 RUN --mount=type=secret,id=build-ca \
     if [ -f /run/secrets/build-ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/build-ca; fi; npm ci
 COPY v2/Front-End/ ./
 RUN npm run build
 
-FROM golang:1.27.1-alpine AS backend
+FROM golang:1.27.4-alpine AS backend
 ARG VERSION=2.0.0
 WORKDIR /src/v2/Back-End
 COPY v2/Back-End/go.mod v2/Back-End/go.sum ./

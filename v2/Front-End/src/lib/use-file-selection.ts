@@ -1,10 +1,12 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import type { SharedFile } from "./types";
 
 // Keep the records, not just IDs from the visible page: bulk actions must also
 // receive files selected on other pages. The owning explorer scopes this state.
 export function useFileSelection() {
   const [selected, setSelected] = useState(new Map<string, SharedFile>());
+  const anchor = useRef<{ scope: string; id: string } | null>(null);
+  const resetAnchor = useCallback(() => { anchor.current = null; }, []);
   const selectedFiles = useMemo(() => Array.from(selected.values()), [selected]);
   const toggle = useCallback((file: SharedFile) => {
     setSelected((current) => {
@@ -24,7 +26,27 @@ export function useFileSelection() {
       return next;
     });
   }, []);
-  const clear = useCallback(() => setSelected(new Map()), []);
+  const toggleRange = useCallback((file: SharedFile, items: SharedFile[], scope: string, shift: boolean) => {
+    const start = anchor.current?.scope === scope ? items.findIndex((item) => item.uniqueID === anchor.current?.id) : -1;
+    const end = items.findIndex((item) => item.uniqueID === file.uniqueID);
+    if (!shift || start < 0 || end < 0) {
+      anchor.current = { scope, id: file.uniqueID };
+      toggle(file);
+      return;
+    }
+    const step = end >= start ? 1 : -1;
+    const range: SharedFile[] = [];
+    for (let i = start; ; i += step) {
+      range.push(items[i]);
+      if (i === end) break;
+    }
+    setSelected((current) => {
+      const next = new Map(current);
+      for (const item of range) if (!next.has(item.uniqueID)) next.set(item.uniqueID, item);
+      return next;
+    });
+  }, [toggle]);
+  const clear = useCallback(() => { anchor.current = null; setSelected(new Map()); }, []);
   const remove = useCallback((ids: string[]) => {
     setSelected((current) => {
       if (!ids.some((id) => current.has(id))) return current;
@@ -37,5 +59,5 @@ export function useFileSelection() {
     const count = items.filter((file) => selected.has(file.uniqueID)).length;
     return count === 0 ? false : count === items.length ? true : "indeterminate";
   }, [selected]);
-  return { selected, selectedFiles, toggle, setVisible, clear, remove, pageState };
+  return { selected, selectedFiles, toggle, toggleRange, resetAnchor, setVisible, clear, remove, pageState };
 }

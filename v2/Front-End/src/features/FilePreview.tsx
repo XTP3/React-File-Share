@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import {
   Download, ExternalLink, File, Link, LoaderCircle, AppWindow, Minimize,
-  Music, Pause, Play, RotateCcw, Fullscreen, PanelsTopLeft, Volume2, VolumeX, X,
+  Music, Pause, Play, RotateCcw, Fullscreen, PanelsTopLeft, Volume2, VolumeX, X, ChevronLeft, ChevronRight,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -220,7 +220,16 @@ function ImagePreview({ file }: { file: SharedFile }) {
   );
 }
 
-export function FilePreview({ file, onClose }: { file: SharedFile | null; onClose: () => void }) {
+export interface PreviewNavigation {
+  position: number;
+  total: number;
+  loading: boolean;
+  error: string;
+  onNavigate: (direction: -1 | 1) => void;
+  onRetry: () => void;
+}
+
+export function FilePreview({ file, onClose, navigation }: { file: SharedFile | null; onClose: () => void; navigation?: PreviewNavigation }) {
   const viewerRef = useRef<HTMLDivElement>(null);
   const [tooltipContainer, setTooltipContainer] = useState<HTMLDivElement | null>(null);
   const attachViewer = useCallback((element: HTMLDivElement | null) => {
@@ -229,25 +238,24 @@ export function FilePreview({ file, onClose }: { file: SharedFile | null; onClos
   }, []);
   const mediaRef = useRef<HTMLMediaElement | null>(null);
   const previousFocus = useRef<HTMLElement | null>(null);
-  const [previousFile, setPreviousFile] = useState(file);
+  const open = !!file;
+  const [previousOpen, setPreviousOpen] = useState(open);
   const [expanded, setExpanded] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
 
-  // Reset before rendering a different file, including reopening a closed preview.
-  if (previousFile !== file) {
-    setPreviousFile(file);
-    setExpanded(false);
+  // File changes preserve expansion; closing starts the next session at normal size.
+  if (previousOpen !== open) {
+    setPreviousOpen(open);
+    if (!open) setExpanded(false);
   }
 
   useEffect(() => {
     const viewer = viewerRef.current;
-    if (viewer && document.fullscreenElement === viewer)
-      void document.exitFullscreen().catch(() => {});
     return () => {
       if (viewer && document.fullscreenElement === viewer)
         void document.exitFullscreen().catch(() => {});
     };
-  }, [file?.uniqueID]);
+  }, [open]);
 
   useEffect(() => {
     function syncFullscreen() {
@@ -262,6 +270,14 @@ export function FilePreview({ file, onClose }: { file: SharedFile | null; onClos
     if (document.fullscreenElement === viewerRef.current && document.exitFullscreen)
       void document.exitFullscreen().catch(() => {});
     onClose();
+  }
+
+  function navigate(direction: -1 | 1) {
+    if (!navigation || navigation.loading ||
+        (direction === -1 && navigation.position <= 1) ||
+        (direction === 1 && navigation.position >= navigation.total)) return;
+    mediaRef.current?.pause();
+    navigation.onNavigate(direction);
   }
 
   async function toggleFullscreen() {
@@ -299,6 +315,16 @@ export function FilePreview({ file, onClose }: { file: SharedFile | null; onClos
     <Dialog open={!!file} onOpenChange={(open) => { if (!open) closePreview(); }}>
       <DialogContent ref={attachViewer} className="file-preview-dialog" showCloseButton={false}
         data-expanded={expanded || fullscreen}
+        onKeyDown={(event) => {
+          if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey ||
+              (event.key !== "ArrowLeft" && event.key !== "ArrowRight")) return;
+          const target = event.target;
+          if (target instanceof Element && target.closest('input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="slider"],[role="combobox"],[role="menu"],[role="menuitem"],audio,video,[data-slot="select-content"],[data-slot="dropdown-menu-content"]')) return;
+          if (navigation) {
+            event.preventDefault();
+            navigate(event.key === "ArrowLeft" ? -1 : 1);
+          }
+        }}
         onOpenAutoFocus={() => {
           if (document.activeElement instanceof HTMLElement && !viewerRef.current?.contains(document.activeElement))
             previousFocus.current = document.activeElement;
@@ -346,10 +372,22 @@ export function FilePreview({ file, onClose }: { file: SharedFile | null; onClos
               </Tooltip>
             </div>
           </header>
-          <div className="preview-body">
+          {navigation && <nav className="preview-navigation" aria-label="Preview navigation">
+            <Button variant="ghost" size="icon" aria-label="Previous file" disabled={navigation.loading || navigation.position <= 1} onClick={() => navigate(-1)}><ChevronLeft /></Button>
+            <span role="status" aria-live="polite">{navigation.position.toLocaleString()} / {navigation.total.toLocaleString()}</span>
+            <Button variant="ghost" size="icon" aria-label="Next file" disabled={navigation.loading || navigation.position >= navigation.total} onClick={() => navigate(1)}><ChevronRight /></Button>
+          </nav>}
+          <div className="preview-body" aria-busy={navigation?.loading || false}>
+            <div className="preview-content" inert={navigation?.loading || undefined} data-loading={navigation?.loading || undefined}>
             {file.category === "photo" || file.category === "gif" ? <ImagePreview key={file.uniqueID} file={file} />
               : file.category === "video" || file.category === "audio" ? <MediaPlayer key={file.uniqueID} file={file} mediaRef={mediaRef} />
               : <div className="preview-stage preview-unsupported"><File aria-hidden="true" /><p>Open or download this file to view it.</p></div>}
+            </div>
+            {navigation?.loading && <Badge variant="secondary" className="preview-navigation-loading" role="status"><LoaderCircle className="animate-spin" />Loading file…</Badge>}
+            {navigation?.error && <Alert className="preview-navigation-error" variant="destructive"><AlertDescription>
+              <p>{navigation.error}</p>
+              <Button variant="outline" onClick={navigation.onRetry}><RotateCcw />Retry</Button>
+            </AlertDescription></Alert>}
           </div>
           <footer className="preview-file-actions" aria-label="File actions">
             <Button variant="outline" asChild><a href={shareURL(file.uniqueID, "v")} target="_blank" rel="noopener noreferrer"

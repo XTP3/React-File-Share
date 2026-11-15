@@ -1,0 +1,17 @@
+.bulk-download-choice { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.bulk-download-choice [data-slot="select-trigger"] { width: 100%; min-height: 44px; }
+.bulk-download-dialog [data-slot="dialog-description"],
+.bulk-download-choice p { overflow-wrap: anywhere; }
+.bulk-download-choice p { font-size: 12px; }
+.copy-links-dialog [data-slot="textarea"] {
+  height: min(40dvh, 320px);
+  min-height: 96px;
+  resize: vertical;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, monospace;
+}
+@media (max-width: 600px) {
+  .bulk-download-dialog [data-slot="dialog-footer"] [data-slot="button"],
+  .copy-links-dialog [data-slot="dialog-footer"] [data-slot="button"] { min-height: 44px; white-space: normal; }
+  .copy-links-dialog [data-slot="textarea"] { font-size: 16px; }
+}

@@ -38,6 +38,7 @@ type App struct {
 	statsMu    sync.Mutex
 	stats      map[string]cachedStats
 	thumbnails thumbnailCache
+	downloads  downloadStore
 }
 
 func New(ctx context.Context, c config.Config) (*App, error) {
@@ -188,6 +189,8 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /f", a.private(a.legacyList))
 	mux.HandleFunc("GET /f/s/{query}", a.private(a.legacySearch))
 	mux.HandleFunc("POST /api/v2/files/upload", a.private(a.upload))
+	mux.HandleFunc("POST /api/v2/downloads", a.private(a.createDownload))
+	mux.HandleFunc("GET /api/v2/downloads/{id}/archive", a.private(a.downloadArchive))
 	mux.HandleFunc("POST /api/files/upload", a.private(a.upload))
 	mux.HandleFunc("DELETE /api/v2/files/{id}", a.private(a.deleteFile))
 	mux.HandleFunc("DELETE /api/files/delete/{id}", a.private(a.deleteFile))
@@ -208,6 +211,9 @@ func (a *App) Handler() http.Handler {
 		w.Header().Set("Referrer-Policy", "same-origin")
 		defer func() {
 			if e := recover(); e != nil {
+				if e == http.ErrAbortHandler {
+					panic(e)
+				}
 				log.Printf("request failed: %v", e)
 				fail(w, 500, "request failed")
 			}

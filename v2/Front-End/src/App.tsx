@@ -55,7 +55,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Auth } from "@/features/Auth";
 import { Explorer } from "@/features/Explorer";
-import { FilePreview } from "@/features/FilePreview";
+import { PreviewNavigator } from "@/features/PreviewNavigator";
+import type { PreviewSession } from "@/lib/preview-context";
 import { LibraryPicker } from "@/features/LibraryPicker";
 import { Logo } from "@/components/Logo";
 import { readPreferences, savePreferences, readStatsVisible, saveStatsVisible } from "@/lib/preferences";
@@ -104,7 +105,7 @@ export default function App() {
   const [target, setTarget] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [preview, setPreview] = useState<SharedFile | null>(null);
+  const [preview, setPreview] = useState<PreviewSession | null>(null);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [statsVisible, setStatsVisible] = useState(false);
   const [completedSelection, setCompletedSelection] = useState<{ ids: string[]; scope?: string } | null>(null);
@@ -182,6 +183,7 @@ export default function App() {
       setAction(null);
       setError("");
       setCollection(routeCollection());
+      setPreview(null);
       setLibraryOpen(false);
       setUploadOpen(location.pathname.toLowerCase() === "/upload");
     };
@@ -215,6 +217,7 @@ export default function App() {
     setAction(null);
     setError("");
     setCollection(id);
+    setPreview(null);
     setLibraryOpen(false);
     history.pushState(
       {},
@@ -657,7 +660,7 @@ export default function App() {
             onDelete={(files) => begin({ kind: "deleteFiles", files })}
             onAssign={(files) => begin({ kind: "assign", files })}
             onRemove={(files) => begin({ kind: "remove", files, collectionId: collection })}
-            onPreview={setPreview}
+            onPreview={(file, context) => setPreview({ file, context })}
             onRefresh={invalidate}
           />
         </main>
@@ -843,7 +846,7 @@ export default function App() {
           </form>
         </DialogContent>
       </Dialog>
-      <FilePreview file={preview} onClose={() => setPreview(null)} />
+      {preview && <PreviewNavigator initial={preview} onClose={() => setPreview(null)} />}
     </div>
   );
 }

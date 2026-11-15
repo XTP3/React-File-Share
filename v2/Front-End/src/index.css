@@ -149,6 +149,7 @@
   --scrollbar-thumb-hover: #7b8493;
   --scrollbar-thumb-active: #969fad;
   --mobile-navigation-size: 44px;
+  --file-action-size: 44px;
   --font-sans: "Montserrat Variable", sans-serif;
   --font-heading: "Manrope Variable", sans-serif;
   --preview-photo: var(--primary);
@@ -738,6 +739,22 @@ h2 {
   width: 14px;
   height: 14px;
 }
+.selection-actions-desktop { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.selection-actions-mobile { display: none !important; }
+.file-row-actions { display: flex; align-items: center; flex-shrink: 0; gap: 2px; justify-content: flex-end; }
+.file-row-actions [data-slot="button"] { flex-shrink: 0; width: var(--file-action-size); min-width: var(--file-action-size); min-height: var(--file-action-size); }
+@media (max-width: 850px) {
+  .selection-actions-desktop { display: none; }
+  .selection-actions-mobile { display: inline-flex !important; min-width: 44px; min-height: 44px; }
+  .selection-bar > span { flex: 1; min-width: 0; flex-basis: auto; }
+  .selection-bar > span > .muted { flex-basis: 100%; }
+  .selection-bar > button { min-width: 44px; min-height: 44px; }
+}
+@media (max-width: 600px) {
+  .mobile-file-list [data-slot="card-content"] { gap: 8px; }
+  .selection-bar { flex-wrap: nowrap; }
+  .selection-bar > span { flex-basis: auto !important; }
+}
 .desktop-file-table table {
   table-layout: fixed;
 }
@@ -775,7 +792,7 @@ h2 {
   width: 120px;
 }
 .desktop-file-table th:nth-child(6) {
-  width: 60px;
+  width: calc(2 * var(--file-action-size) + 30px);
 }
 .file-name-button {
   padding: 0 !important;
