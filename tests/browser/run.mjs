@@ -179,8 +179,11 @@ try {
     assert.equal(await page.getByRole('button', { name: 'Create collection', exact: true }).count(), 1, 'One plus button creates collections');
     assert.equal(await page.locator('.page-heading p').count(), 0, 'Files heading has no subtitle');
     await visible(page.getByRole('heading', { name: 'All Files', exact: true, level: 2 }));
+    // Removing the login form leaves the browser's sequential-navigation start
+    // point engine-dependent. Start on a known control and verify real tab order.
+    await page.getByRole('button', { name: /^All Files/ }).focus();
     await page.keyboard.press('Tab');
-    assert.ok(await page.evaluate(() => document.activeElement !== document.body), 'Keyboard focus must reach a control');
+    assert.ok(await page.getByRole('button', { name: 'Create collection', exact: true }).evaluate(element => element === document.activeElement), 'Tab reaches the next enabled navigation control');
     await noHorizontalOverflow(page);
     await screenshot('desktop-empty-dark');
   });
