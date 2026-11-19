@@ -91,6 +91,10 @@ class HTTP:
         boundary = 'integration-' + uuid.uuid4().hex
         chunks = []
         for name, content, mime in files:
+            if mime is None:
+                chunks.append((f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n').encode())
+                chunks.extend([content, b'\r\n'])
+                continue
             chunks.append((f'--{boundary}\r\nContent-Disposition: form-data; name="files"; filename="{name}"\r\nContent-Type: {mime}\r\n\r\n').encode())
             chunks.extend([content, b'\r\n'])
         chunks.append(f'--{boundary}--\r\n'.encode())
@@ -384,6 +388,105 @@ class Suite:
         check(len(self.owner.get('/f/d/' + boundary['uniqueID'])) == LIMIT, 'exact aggregate limit should succeed')
         self.owner.request('DELETE', '/api/v2/files/' + boundary['uniqueID'])
 
+    def upload_destinations(self):
+        owner = self.owner
+        a, b = (owner.post('/api/v2/collections', {'title': title}, status=201)['id'] for title in ['Receipts', 'Archive'])
+        foreign = self.other.post('/api/v2/collections', {'title': 'Private'}, status=201)['id']
+        file = ('selected.txt', b'one copy', 'text/plain')
+        second = ('second.txt', b'second', 'text/plain')
+        targets = lambda ids: ('collectionIds', json.dumps(ids).encode(), None)
+        url = '/api/v2/files/upload?collectionId=' + a
+        before = fixture('upload-counts', self.db, self.root)
+        for parts, path, status in [
+            ([targets([a, b]), file, second], '/api/v2/files/upload', 400),
+            ([targets([a]), targets([b]), file], '/api/v2/files/upload', 400),
+            ([file, targets([])], '/api/v2/files/upload', 400),
+            ([('other', b'field', None), targets([]), file], '/api/v2/files/upload', 400),
+            ([targets([b]), file], url, 400),
+            ([file], url + '&collectionId=' + b, 400),
+            ([targets([a, foreign]), file], '/api/v2/files/upload', 404),
+            ([targets([a, 'deleted-collection-id']), file], '/api/v2/files/upload', 404),
+        ]:
+            owner.upload(parts, path=path, status=status)
+        # The second ordered insert fails after the first membership succeeds.
+        fixture('reject-target', self.db, self.root, b)
+        try:
+            owner.upload([targets([a, b]), file], status=503)
+        finally:
+            fixture('restore-targets', self.db, self.root)
+        check(before == fixture('upload-counts', self.db, self.root), 'failed upload left metadata, memberships or journal')
+        check(not (self.root / 'fixture-owner' / file[0]).exists() and not any((self.root / '.staging').iterdir()),
+              'failed assignment left published or staged bytes')
+
+        for ids in [[], [a], [b, a, b]]:
+            saved = owner.upload([targets(ids), file])['files'][0]
+            for cid in (a, b):
+                check(self.listing(collectionId=cid)['total'] == int(cid in ids), 'selected membership differs')
+            check(self.listing(q=file[0])['total'] == 1 and owner.get('/f/d/' + saved['uniqueID']) == file[1],
+                  'expected one file record and its original bytes')
+            owner.request('DELETE', '/api/v2/files/' + saved['uniqueID'])
+        for path in [url, '/api/files/upload?collectionId=' + a]:
+            owner.upload([file, second], path=path)
+            assigned = self.listing(collectionId=a)['items']
+            check(len(assigned) == 2, 'singleton query failed to assign a batch')
+            for saved in assigned:
+                owner.request('DELETE', '/api/v2/files/' + saved['uniqueID'])
+        owner.request('DELETE', '/api/v2/collections/' + a)
+        owner.request('DELETE', '/api/v2/collections/' + b)
+        self.other.request('DELETE', '/api/v2/collections/' + foreign)
+
+    def many_upload_targets(self):
+        ids = fixture('many-targets', self.db, self.root)
+        parts = [('collectionIds', json.dumps(ids).encode(), None), ('bulk-targets.txt', b'one file', 'text/plain')]
+        before = fixture('upload-counts', self.db, self.root)
+        try:
+            fixture('reject-target', self.db, self.root, ids[-1])
+            try:
+                self.owner.upload(parts, status=503)
+            finally:
+                fixture('restore-targets', self.db, self.root)
+            check(before == fixture('upload-counts', self.db, self.root), 'failed final batch left partial assignments')
+            saved = self.owner.upload(parts)['files'][0]
+            after = fixture('upload-counts', self.db, self.root)
+            check(after['collection_memberships'] == before['collection_memberships'] + len(ids)
+                  and after['files'] == before['files'] + 1, 'large selection did not create exactly the required rows')
+            self.owner.request('DELETE', '/api/v2/files/' + saved['uniqueID'])
+        finally:
+            fixture('remove-many-targets', self.db, self.root)
+
+    def upload_target_deleted(self):
+        ids = [self.owner.post('/api/v2/collections', {'title': name}, status=201)['id'] for name in ('Stay', 'Delete')]
+        parsed = urllib.parse.urlsplit(self.base)
+        prefix = ('--selection\r\nContent-Disposition: form-data; name="collectionIds"\r\n\r\n'
+                  + json.dumps(ids) + '\r\n--selection\r\nContent-Disposition: form-data; name="files"; '
+                  'filename="deleted-target.txt"\r\nContent-Type: text/plain\r\n\r\npartial').encode()
+        end = b'-content\r\n--selection--\r\n'
+        before = fixture('upload-counts', self.db, self.root)
+        with socket.create_connection((parsed.hostname, parsed.port), timeout=5) as stream:
+            header = (f'POST /api/v2/files/upload HTTP/1.1\r\nHost: {parsed.netloc}\r\nAuthorization: Bearer {self.owner.token}\r\n'
+                      f'Content-Type: multipart/form-data; boundary=selection\r\nContent-Length: {len(prefix) + len(end)}\r\n\r\n')
+            stream.sendall(header.encode() + prefix)
+            deadline = time.monotonic() + 5
+            while not any(p.is_file() for p in (self.root / '.staging').rglob('*')):
+                check(time.monotonic() < deadline, 'selection did not reach file staging')
+                time.sleep(0.02)
+            self.owner.request('DELETE', '/api/v2/collections/' + ids[1])
+            stream.sendall(end)
+            with stream.makefile('rb') as response:
+                check(response.readline().split()[1] == b'404', 'upload did not reject a deleted target')
+        check(before == fixture('upload-counts', self.db, self.root), 'target deletion left partial metadata')
+        check(not (self.root / 'fixture-owner' / 'deleted-target.txt').exists()
+              and not any((self.root / '.staging').iterdir()), 'target deletion left file bytes')
+        self.owner.request('DELETE', '/api/v2/collections/' + ids[0])
+
+    def upload_membership_recovery(self):
+        if not self.restart:
+            raise SkipGroup('cannot restart an externally managed server')
+        fixture('upload-journals', self.db, self.root)
+        self.restart()
+        fixture('check-upload-journals', self.db, self.root)
+        self.owner.request('DELETE', '/api/v2/files/recovery-committed')
+
     def concurrent_duplicates(self):
         def upload(index):
             client = HTTP(self.base, jwt('fixture-owner'))
@@ -403,6 +506,7 @@ class Suite:
         with socket.create_connection((parsed.hostname, parsed.port or 80), timeout=5) as stream:
             header = (f'POST /api/v2/files/upload HTTP/1.1\r\nHost: {parsed.netloc}\r\nAuthorization: Bearer {self.owner.token}\r\n'
                       'Content-Type: multipart/form-data; boundary=cancel-fixture\r\nContent-Length: 3000\r\n\r\n'
+                      '--cancel-fixture\r\nContent-Disposition: form-data; name="collectionIds"\r\n\r\n["fixture-recoverable-title"]\r\n'
                       '--cancel-fixture\r\nContent-Disposition: form-data; name="files"; filename="cancelled.txt"\r\n'
                       'Content-Type: text/plain\r\n\r\npartial-bytes')
             stream.sendall(header.encode())
@@ -708,7 +812,7 @@ def main():
 
             suite = Suite(base, uploads, database, restart_backend if process else None, probe_runtime_lock if process else None)
             for name in ('config', 'legacy_auth', 'sessions', 'legacy_files', 'downloads', 'bulk_downloads', 'pagination', 'filters',
-                         'rejected_uploads', 'successful_uploads', 'concurrent_duplicates', 'cancellation', 'interrupted_process',
+                         'rejected_uploads', 'successful_uploads', 'upload_destinations', 'many_upload_targets', 'upload_target_deleted', 'upload_membership_recovery', 'concurrent_duplicates', 'cancellation', 'interrupted_process',
                          'stale_journal_preserves_replacement', 'runtime_lock',
                          'duplicate_reference_delete', 'inline_security', 'disk_failures', 'database_failure',
                          'malformed_collections', 'thumbnails', 'collections', 'storage', 'account_operations', 'password_logout'):

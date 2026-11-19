@@ -110,19 +110,13 @@ export function shareURL(id: string, kind: "v" | "d") {
 }
 export function upload(
   file: File,
-  collection: string,
+  collectionIds: string[],
   onProgress: (n: number) => void,
   signal: AbortSignal,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open(
-      "POST",
-      "/api/v2/files/upload" +
-        (collection !== "all" && collection !== "uncollected"
-          ? `?collectionId=${encodeURIComponent(collection)}`
-          : ""),
-    );
+    xhr.open("POST", "/api/v2/files/upload");
     xhr.withCredentials = true;
     xhr.setRequestHeader("X-CSRF-Token", csrfToken);
     xhr.upload.onprogress = (e) => {
@@ -161,6 +155,7 @@ export function upload(
       return;
     }
     const form = new FormData();
+    if (collectionIds.length) form.append("collectionIds", JSON.stringify([...new Set(collectionIds)]));
     form.append("files", file);
     xhr.send(form);
   });

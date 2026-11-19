@@ -6,9 +6,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { api, bytes, formatDate } from "@/lib/api";
 import type { PublicConfig, SharedFile } from "@/lib/types";
 
-export function FileDetails({ file, config, onClose }: {
+export function FileDetails({ file, config, returnFocus, onClose }: {
   file: SharedFile | null;
   config?: PublicConfig;
+  returnFocus?: HTMLElement | null;
   onClose: () => void;
 }) {
   const thumbnail = useQuery({
@@ -18,7 +19,12 @@ export function FileDetails({ file, config, onClose }: {
     retry: false,
   });
   return <Dialog open={!!file} onOpenChange={(open) => { if (!open) onClose(); }}>
-    <DialogContent className="file-details-dialog">
+    <DialogContent className="file-details-dialog" onCloseAutoFocus={event => {
+      if (returnFocus?.isConnected) {
+        event.preventDefault();
+        returnFocus.focus();
+      }
+    }}>
       <DialogHeader>
         <DialogTitle>File details</DialogTitle>
         <DialogDescription>Full filename and file information.</DialogDescription>

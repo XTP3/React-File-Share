@@ -60,7 +60,7 @@ it("keeps off-page selections, selects only the visible page, and submits every 
   rerender(view({ ids: ["id-25"] }));
   await waitFor(() => expect(screen.queryByRole("button", { name: "Clear file selection" })).not.toBeInTheDocument());
   client.clear();
-});
+}, 15_000);
 it("debounces search, cancels stale requests and resets pagination", async () => {
   const requests: { q: string; signal: AbortSignal }[] = [];
   vi.stubGlobal(

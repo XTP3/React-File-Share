@@ -16,11 +16,14 @@ export async function layoutRegression({ page, context, session, screenshot }) {
   const pageTwo = url => url.pathname === '/api/v2/files' && url.searchParams.get('page') === '2';
   try {
     await ready();
-    await page.getByRole('button', { name: 'Hide stats', exact: true }).click();
+    await page.getByRole('button', { name: 'Collapse sidebar', exact: true }).click();
     await page.reload();
     await ready();
-    await visible(page.getByRole('button', { name: 'Show stats', exact: true }));
-    assert.equal(await page.getByRole('region', { name: 'Storage overview', exact: true }).count(), 0, 'Stats preference survives reload');
+    await visible(page.getByRole('button', { name: 'Expand sidebar', exact: true }));
+    await screenshot('desktop-sidebar-collapsed');
+    assert.ok(!(await page.locator('.desktop-sidebar').isVisible()), 'Collapsing the sidebar hides its controls');
+    await page.getByRole('button', { name: 'Expand sidebar', exact: true }).click();
+    assert.equal(await page.getByRole('region', { name: 'Storage overview', exact: true }).count(), 0, 'Storage stays in its dialog');
     assert.equal(await page.locator('.workspace-footer').count(), 0);
     const scrollStyle = await list.evaluate(scrollbar);
     assert.equal(scrollStyle.width, 'thin');
@@ -46,6 +49,13 @@ export async function layoutRegression({ page, context, session, screenshot }) {
       assert.ok(await list.evaluate(element => element.scrollTop > 0), 'Files scroll within their own region');
       assert.deepEqual(await pagination.boundingBox(), before, 'Scrolling files leaves pagination stationary');
       await noHorizontalOverflow(page);
+      if (width <= 390) {
+        const search = await page.getByRole('textbox', { name: 'Search files', exact: true }).boundingBox();
+        const sort = await page.getByRole('combobox', { name: 'Sort files', exact: true }).boundingBox();
+        const selectAll = await page.locator('.toolbar-select-all').boundingBox();
+        assert.ok(search.width >= width - 20 && search.y < sort.y, 'Search spans its own row');
+        assert.ok(sort.width === 44 && Math.abs(sort.y - selectAll.y) <= 3, 'Sort and Select All fit on one row');
+      }
       await screenshot(`files-viewport-${width}x${height}`);
       await list.evaluate(element => { element.scrollTop = 0; });
     }
@@ -112,8 +122,6 @@ export async function layoutRegression({ page, context, session, screenshot }) {
     await page.setViewportSize(originalViewport);
     const search = page.getByRole('textbox', { name: 'Search files', exact: true });
     await search.fill(''); await search.press('Enter');
-    if (await page.getByRole('button', { name: 'Show stats', exact: true }).count())
-      await page.getByRole('button', { name: 'Show stats', exact: true }).click();
     await page.reload();
     await ready();
   }

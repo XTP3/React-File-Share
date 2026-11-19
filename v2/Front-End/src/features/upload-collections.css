@@ -1,0 +1,23 @@
+.upload-collection-picker { border: 1px solid var(--border); border-radius: var(--radius); min-width: 0; font-size: 12px; }
+.upload-collection-picker .upload-collection-trigger { width: 100%; height: auto; min-height: 44px; justify-content: space-between; padding: 10px 12px; text-align: left; white-space: normal; overflow-wrap: anywhere; }
+.upload-collection-trigger > span { min-width: 0; }
+.upload-collection-trigger > span > span { display: block; color: var(--muted-foreground); font-size: 12px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.upload-collection-options { display: flex; flex-direction: column; gap: 8px; padding: 0 12px 12px; }
+.upload-collection-options input:not([type=checkbox]) { min-height: 44px; }
+.upload-collection-checklist { max-height: 200px; overflow-y: auto; }
+.upload-collection-checklist label { min-height: 44px; display: flex; align-items: center; gap: 10px; cursor: pointer; overflow-wrap: anywhere; }
+.upload-collection-checklist [data-slot=checkbox] { width: 18px; height: 18px; flex-shrink: 0; accent-color: var(--primary); }
+.upload-collection-missing { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--destructive); }
+.upload-file-collections { margin-top: 8px; }
+.upload-file-collections > p { color: var(--muted-foreground); font-size: 11px; }
+.upload-file-collections [data-slot=button], .upload-collection-options [data-slot=button] { min-height: 44px; height: auto; white-space: normal; }
+.upload-dialog .upload-item [data-slot=card-content] { align-items: flex-start; }
+.upload-row-actions { display: flex; flex-direction: column; flex-shrink: 0; }
+.upload-row-actions [data-slot=button] { min-height: 44px; min-width: 44px; }
+.upload-dialog .queue-info .upload-collection-picker { margin-top: 6px; }
+@media (max-width: 600px) {
+  .upload-dialog .upload-item [data-slot=card-content] { gap: 6px; padding-inline: 8px; }
+  .upload-dialog .queue-thumbnail { width: 36px; height: 40px; }
+  .upload-collection-picker .upload-collection-trigger { padding-inline: 8px; }
+  .upload-collection-options { padding-inline: 8px; }
+}

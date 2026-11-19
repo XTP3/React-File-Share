@@ -15,6 +15,8 @@ import {
   FolderPlus,
   MoreHorizontal,
   ChartNoAxesColumn,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -54,17 +56,18 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { Auth } from "@/features/Auth";
+import { PersistentAudioProvider, notifyAudioFilesDeleted } from "@/features/PersistentAudio";
 import { Explorer } from "@/features/Explorer";
 import { PreviewNavigator } from "@/features/PreviewNavigator";
 import type { PreviewSession } from "@/lib/preview-context";
 import { LibraryPicker } from "@/features/LibraryPicker";
 import { Logo } from "@/components/Logo";
-import { readPreferences, savePreferences, readStatsVisible, saveStatsVisible } from "@/lib/preferences";
+import { readPreferences, savePreferences, readSidebarCollapsed, saveSidebarCollapsed } from "@/lib/preferences";
 import { Storage } from "@/features/Storage";
 import { UploadQueue } from "@/features/UploadQueue";
 import { Connection } from "@/features/Connection";
 import { ThemeControl } from "@/features/ThemeControl";
-import { api, APIError, bytes, setCSRF, changeMembership } from "@/lib/api";
+import { api, APIError, setCSRF, changeMembership } from "@/lib/api";
 import type {
   Collection,
   Session,
@@ -107,7 +110,8 @@ export default function App() {
   const [error, setError] = useState("");
   const [preview, setPreview] = useState<PreviewSession | null>(null);
   const [libraryOpen, setLibraryOpen] = useState(false);
-  const [statsVisible, setStatsVisible] = useState(false);
+  const [storageOpen, setStorageOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [completedSelection, setCompletedSelection] = useState<{ ids: string[]; scope?: string } | null>(null);
   const config = useQuery({
     queryKey: ["config"],
@@ -133,7 +137,7 @@ export default function App() {
         "/storage?collectionId=" + encodeURIComponent(collection),
         { signal },
       ),
-    enabled: !!session && collection !== "all" && collection !== "uncollected",
+    enabled: storageOpen && !!session && collection !== "all" && collection !== "uncollected",
     staleTime: 30000,
   });
   const [reconciling, setReconciling] = useState(false);
@@ -147,7 +151,7 @@ export default function App() {
     api<Session>("/auth/me")
       .then((s) => {
         setCSRF(s.csrfToken);
-        setStatsVisible(readStatsVisible(s.user.uniqueID));
+        setSidebarCollapsed(readSidebarCollapsed(s.user.uniqueID));
         setSession(s);
       })
       .catch((e) => {
@@ -164,6 +168,7 @@ export default function App() {
       client.clear();
       setCSRF("");
       setSession(null);
+      setStorageOpen(false);
       setAction(null);
       setPreview(null);
       setLibraryOpen(false);
@@ -207,7 +212,7 @@ export default function App() {
     setAction(null);
     setBusy(false);
     setCSRF(s.csrfToken);
-    setStatsVisible(readStatsVisible(s.user.uniqueID));
+    setSidebarCollapsed(readSidebarCollapsed(s.user.uniqueID));
     setSession(s);
     setAuthError("");
     history.replaceState({}, "", "/files");
@@ -249,6 +254,7 @@ export default function App() {
       client.clear();
       setCSRF("");
       setSession(null);
+      setStorageOpen(false);
       setCollection("all");
       setLibraryOpen(false);
       setCompletedSelection(null);
@@ -276,6 +282,7 @@ export default function App() {
     const finishBatch = (ids: string[]) => {
       if (!currentSession()) throw Error("The session changed during this operation.");
       completed.push(...ids);
+      if (action.kind === "deleteFiles") notifyAudioFilesDeleted(ids);
       setCompletedSelection({ ids: [...completed], scope: action.kind === "deleteFiles" ? undefined : collection });
       invalidate();
     };
@@ -359,6 +366,7 @@ export default function App() {
         setAction(null);
         setCSRF("");
         setSession(null);
+      setStorageOpen(false);
         toast.success("Password changed. Log in again.");
         return;
       }
@@ -378,12 +386,15 @@ export default function App() {
   }
   async function reconcile() {
     setReconciling(true);
+    const collectionId = current?.id;
+    const queryKey = collectionId
+      ? ["collectionStorage", session?.user.uniqueID, collectionId]
+      : ["storage", session?.user.uniqueID];
+    const path = collectionId
+      ? "/storage/refresh?collectionId=" + encodeURIComponent(collectionId)
+      : "/storage/refresh";
     try {
-      client.setQueryData(
-        ["storage", session?.user.uniqueID],
-        await api<StorageStats>("/storage/refresh", { method: "POST" }),
-      );
-      client.invalidateQueries({ queryKey: ["collectionStorage"] });
+      client.setQueryData(queryKey, await api<StorageStats>(path, { method: "POST" }));
       toast.success("Storage totals refreshed");
     } catch (e) {
       toast.error((e as Error).message);
@@ -448,7 +459,7 @@ export default function App() {
                   size="icon-sm"
                   aria-label={`Manage ${c.title}`}
                 >
-                  <ChevronDown />
+                  <MoreHorizontal />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent>
@@ -489,9 +500,6 @@ export default function App() {
   if (!session)
     return (
       <>
-        <div className="auth-theme">
-          <ThemeControl />
-        </div>
         <Connection uploading={false} />
         {authError && (
           <Alert>
@@ -504,44 +512,46 @@ export default function App() {
           </Alert>
         )}
         <Auth onLogin={login} />
+        <div className="auth-theme"><ThemeControl /></div>
       </>
     );
   return (
-    <div className="app-shell">
+    <PersistentAudioProvider key={session.user.uniqueID}>
+    <div className="app-shell" data-sidebar-collapsed={sidebarCollapsed}>
       <aside className="desktop-sidebar">{nav}</aside>
       <div className="workspace">
         <header className="app-header">
           <div className="header-left">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="mobile-home-button"
-              aria-label="Go to All Files"
-              onClick={() => navigate("all")}
-            >
-              <Logo size={28} className="size-7" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="mobile-nav-button"
-              aria-label="Open navigation"
-              onClick={() => setMobileNav(true)}
-            >
-              <Menu />
-            </Button>
-            <span className="header-breadcrumb">
-              <strong>
+            <Button variant="ghost" size="icon" className="desktop-nav-toggle"
+              aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+              aria-expanded={!sidebarCollapsed} onClick={() => {
+                setSidebarCollapsed(!sidebarCollapsed);
+                saveSidebarCollapsed(session.user.uniqueID, !sidebarCollapsed);
+              }}>{sidebarCollapsed ? <PanelLeftOpen /> : <PanelLeftClose />}</Button>
+            <Button variant="ghost" size="icon" className="mobile-home-button" aria-label="Go to All Files" onClick={() => navigate("all")}><Logo size={24} className="size-6" /></Button>
+            <Button variant="ghost" size="icon" className="mobile-nav-button"
+              aria-label="Open navigation" aria-expanded={mobileNav} onClick={() => setMobileNav(true)}><Menu /></Button>
+            <div className="header-breadcrumb">
+              <h1>
                 {collection === "all"
-                  ? "Files"
+                  ? "All Files"
                   : collection === "uncollected"
                     ? "Uncollected"
                     : current?.title || "Collection"}
-              </strong>
-            </span>
+              </h1>
+            </div>
           </div>
           <div className="header-actions">
-            <ThemeControl />
+            <Button variant="outline" className="storage-button" onClick={() => setStorageOpen(true)}><ChartNoAxesColumn />Storage</Button>
+            <Button className="header-upload" size="icon" aria-label="Upload" onClick={() => setUploadOpen(true)}><CloudUpload /></Button>
+            {current && <DropdownMenu>
+              <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label="Collection actions"><MoreHorizontal /></Button></DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onSelect={() => setLibraryOpen(true)}><FolderPlus />Add from library</DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => begin({ kind: "rename", collection: current })}><Pencil />Rename collection</DropdownMenuItem>
+                <DropdownMenuItem variant="destructive" onSelect={() => begin({ kind: "deleteCollection", collection: current })}><Trash2 />Delete collection</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
@@ -557,6 +567,8 @@ export default function App() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
+                <DropdownMenuItem className="mobile-storage-item" onSelect={() => setStorageOpen(true)}><ChartNoAxesColumn />Storage</DropdownMenuItem>
+                <ThemeControl submenu />
                 <DropdownMenuItem onSelect={() => begin({ kind: "password" })}>
                   <Settings />
                   Change password
@@ -564,7 +576,7 @@ export default function App() {
                 <DropdownMenuSeparator />
                 <DropdownMenuItem disabled={uploading} onSelect={logout}>
                   <LogOut />
-                  {uploading ? "Finish uploads to sign out" : "Sign out"}
+                  {uploading ? "Finish uploads to log out" : "Logout"}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -573,65 +585,6 @@ export default function App() {
         <main className="main-content">
           <div className="workspace-overview">
           <Connection uploading={uploading} />
-          <div className="page-heading">
-            <div className="page-title">
-              <h1>{collection === "all" || collection === "uncollected" ? "Files" : current?.title || "Collection"}</h1>
-              {current && <p className="muted">
-                {collectionStats.data?.totalFiles ?? current.fileCount} files · {bytes(collectionStats.data?.totalBytes ?? current.totalBytes)}
-              </p>}
-            </div>
-              {collection === "all" && <Button variant="outline" className="stats-toggle"
-                aria-expanded={statsVisible} aria-controls="library-stats"
-                onClick={() => {
-                  const visible = !statsVisible;
-                  setStatsVisible(visible);
-                  saveStatsVisible(session.user.uniqueID, visible);
-                }}>
-                <ChartNoAxesColumn />{statsVisible ? "Hide stats" : "Show stats"}
-              </Button>}
-            <div className="page-actions">
-              {current && <Button variant="outline" onClick={() => setLibraryOpen(true)}>
-                <FolderPlus />Add from library
-              </Button>}
-            <Button className="upload-button" onClick={() => setUploadOpen(true)}>
-              <CloudUpload />
-              Upload
-            </Button>
-              {current && <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon" aria-label="Collection actions"><MoreHorizontal /></Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem onSelect={() => begin({ kind: "rename", collection: current })}>
-                    <Pencil />Rename collection
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem variant="destructive" onSelect={() => begin({ kind: "deleteCollection", collection: current })}>
-                    <Trash2 />Delete collection
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>}
-            </div>
-          </div>
-          {collection === "all" && <div id="library-stats" hidden={!statsVisible}>
-          <Storage
-            stats={stats.data}
-            collectionCount={list.length}
-            onRefresh={reconcile}
-            refreshing={reconciling}
-            config={config.data}
-          />
-          {stats.isError && (
-            <Alert>
-              <AlertDescription>
-                Storage information is unavailable.{" "}
-                <Button variant="link" onClick={() => stats.refetch()}>
-                  Retry
-                </Button>
-              </AlertDescription>
-            </Alert>
-          )}
-          </div>}
           {collections.isError && (
             <Alert>
               <AlertDescription>
@@ -665,6 +618,13 @@ export default function App() {
           />
         </main>
       </div>
+      <Dialog open={storageOpen} onOpenChange={setStorageOpen}>
+        <DialogContent className="storage-dialog">
+          <DialogHeader><DialogTitle>Storage</DialogTitle><DialogDescription>{current ? current.title + " · Collection storage" : "All Files · Library storage"}. Each file is counted once within this scope.</DialogDescription></DialogHeader>
+          <Storage stats={current ? collectionStats.data : stats.data} collectionCount={list.length} onRefresh={reconcile} refreshing={reconciling} config={config.data} scope={current ? "collection" : "library"} />
+          {(current ? collectionStats.isError : stats.isError) && <Alert><AlertDescription>Storage information is unavailable. <Button variant="link" onClick={() => current ? collectionStats.refetch() : stats.refetch()}>Retry</Button></AlertDescription></Alert>}
+        </DialogContent>
+      </Dialog>
       <Sheet open={mobileNav} onOpenChange={setMobileNav}>
         <SheetContent side="left" className="mobile-sidebar">
           <SheetHeader className="sr-only">
@@ -689,6 +649,10 @@ export default function App() {
         onOpenChange={setUploadOpen}
         maxSize={config.data?.maxUploadSize || 100 * 1024 * 1024}
         collection={collection}
+        collections={list}
+        collectionsLoading={collections.isPending}
+        collectionsError={collections.isError}
+        onRetryCollections={() => void collections.refetch()}
         onSuccess={invalidate}
         onActiveChange={setUploading}
       />
@@ -848,5 +812,6 @@ export default function App() {
       </Dialog>
       {preview && <PreviewNavigator initial={preview} onClose={() => setPreview(null)} />}
     </div>
+    </PersistentAudioProvider>
   );
 }

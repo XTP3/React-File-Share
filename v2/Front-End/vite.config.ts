@@ -2,11 +2,43 @@ import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { VitePWA } from "vite-plugin-pwa";
-import { fileURLToPath, URL } from "node:url";
+import { readFileSync, readdirSync } from "node:fs";
+import { createRequire } from "node:module";
+import { fileURLToPath, pathToFileURL, URL } from "node:url";
+import type { Plugin } from "vite";
+
+function pdfAssets(): Plugin {
+  const require = createRequire(import.meta.url);
+  const manifestPath = require.resolve("pdfjs-dist/package.json");
+  const { version } = JSON.parse(readFileSync(manifestPath, "utf8")) as { version: string };
+  const pdfPackage = new URL("./", pathToFileURL(manifestPath));
+
+  return {
+    name: "fileshare-pdf-assets",
+    apply: "build",
+    generateBundle() {
+      const folders = ["cmaps", "iccs", "standard_fonts", "wasm"];
+      const files = ["LICENSE", ...folders.flatMap((folder) =>
+        readdirSync(new URL(`${folder}/`, pdfPackage))
+          .filter((file) => !file.startsWith("quickjs-eval."))
+          .map((file) => `${folder}/${file}`),
+      )];
+      for (const file of files) {
+        this.emitFile({
+          type: "asset",
+          fileName: `pdfjs/${version}/${file}`,
+          source: readFileSync(new URL(file, pdfPackage)),
+        });
+      }
+    },
+  };
+}
+
 export default defineConfig({
   plugins: [
     react(),
     tailwindcss(),
+    pdfAssets(),
     VitePWA({
       registerType: "prompt",
       injectRegister: null,
@@ -45,6 +77,7 @@ export default defineConfig({
         navigateFallback: "/index.html",
         navigateFallbackDenylist: [/^\/api\//, /^\/f\//, /^\/a\//],
         globPatterns: ["**/*.{js,css,html,svg,png,woff2}"],
+        globIgnores: ["**/node_modules/**/*", "assets/PdfPreview-*", "pdfjs/**/*"],
         runtimeCaching: [],
       },
     }),

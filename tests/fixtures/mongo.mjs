@@ -1,6 +1,6 @@
 // Fixtures reproduce Mongoose v1 BSON shapes without installing archived v1.
 import { MongoClient, ObjectId, Double, BSON } from 'mongodb';
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, link, readdir } from 'node:fs/promises';
 import path from 'node:path';
 
 const [action, database, root] = process.argv.slice(2);
@@ -134,6 +134,68 @@ try {
     await db.command({ collMod: 'files', validator: action === 'reject-file-writes'
       ? { integrationRejectWrites: { $exists: true } } : {}, validationLevel: 'strict', validationAction: 'error' });
     console.log(JSON.stringify({ configured: true }));
+  } else if (action === 'many-targets') {
+    const ids = Array.from({length: 1025}, (_, i) => 'bulk-upload-' + i);
+    await db.collection('collections').insertMany(ids.map(id => ({id, ownerID: accounts[0].uniqueID, title: id})));
+    console.log(JSON.stringify(ids));
+  } else if (action === 'remove-many-targets') {
+    await db.collection('collections').deleteMany({ownerID: accounts[0].uniqueID, id: /^bulk-upload-[0-9]+$/});
+  } else if (action === 'upload-counts') {
+    const counts = {};
+    for (const name of ['files', 'collection_memberships', 'storage_operations']) {
+      counts[name] = await db.collection(name).countDocuments();
+    }
+    console.log(JSON.stringify(counts));
+  } else if (action === 'reject-target' || action === 'restore-targets') {
+    await db.command({ collMod: 'collection_memberships', validator: action === 'reject-target'
+      ? { collectionId: { $ne: process.argv[5] } } : {}, validationLevel: 'strict', validationAction: 'error' });
+  } else if (action === 'upload-journals') {
+    for (const state of ['intent', 'committed', 'legacy']) {
+      const id = 'recovery-' + state;
+      const stageDir = path.join('.staging', id);
+      const stage = path.join(stageDir, '0');
+      const owner = accounts[0].uniqueID;
+      const file = { _id: new ObjectId(), uploaderID: owner, uniqueID: id, fileName: id + '.txt',
+        fileType: 'text/plain', fileSize: 5, timeOfUpload: Date.now() };
+      await mkdir(path.join(root, stageDir));
+      await writeFile(path.join(root, stage), 'bytes');
+      await link(path.join(root, stage), path.join(root, owner, file.fileName));
+      await db.collection('files').insertOne(file);
+      const targets = state === 'legacy' ? ['first'] : ['first', 'second'];
+      const intended = targets.map(collectionId => ({ _id: new ObjectId(), fileId: id, collectionId, ownerID: owner }));
+      const unrelated = [
+        { fileId: id, collectionId: 'separate', ownerID: owner },
+        { fileId: id, collectionId: 'first', ownerID: accounts[2].uniqueID },
+      ];
+      await db.collection('collection_memberships').insertMany([...intended, ...unrelated]);
+      await db.collection('storage_operations').insertOne({
+        _id: id, kind: 'upload', state: state === 'legacy' ? 'intent' : state,
+        stageDir, stages: [stage], files: [file],
+        ...(state === 'legacy' ? { collection: 'first' } : { membershipIds: intended.map(m => m._id) }),
+      });
+    }
+  } else if (action === 'check-upload-journals') {
+    const owner = accounts[0].uniqueID;
+    const others = accounts[2].uniqueID;
+    const names = await readdir(path.join(root, owner));
+    const members = db.collection('collection_memberships');
+    for (const state of ['intent', 'legacy', 'committed']) {
+      const id = 'recovery-' + state;
+      const file = await db.collection('files').findOne({ uniqueID: id });
+      if ((state === 'committed') !== Boolean(file) || Boolean(file) !== names.includes(id + '.txt')) {
+        throw new Error('Recovered file bytes or metadata differ for ' + state);
+      }
+      const links = await members.find({ fileId: id }).toArray();
+      if (links.length !== (state === 'committed' ? 4 : 2)
+          || !links.some(m => m.ownerID === owner && m.collectionId === 'separate')
+          || !links.some(m => m.ownerID === others && m.collectionId === 'first')) {
+        throw new Error('Recovery removed an unrelated membership or retained partial writes for ' + state);
+      }
+      await members.deleteMany({ fileId: id });
+    }
+    if ((await readdir(path.join(root, '.staging'))).length || await db.collection('storage_operations').countDocuments()) {
+      throw new Error('Recovery left staging or journal');
+    }
   } else if (action === 'stale-delete-journal') {
     const replacement = await db.collection('files').findOne({ uniqueID: process.argv[5] });
     const state = process.argv[6];

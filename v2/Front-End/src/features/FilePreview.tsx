@@ -1,223 +1,37 @@
-import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
-import {
-  Download, ExternalLink, File, Link, LoaderCircle, AppWindow, Minimize,
-  Music, Pause, Play, RotateCcw, Fullscreen, PanelsTopLeft, Volume2, VolumeX, X, ChevronLeft, ChevronRight,
-} from "lucide-react";
+import { useCallback, useRef, useState, type ReactElement } from "react";
+import { AppWindow, ChevronLeft, ChevronRight, Download, Ellipsis, ExternalLink, File, Fullscreen, Info, Link, LoaderCircle, PanelsTopLeft, RotateCcw, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
-import { Slider } from "@/components/ui/slider";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { bytes, shareURL } from "@/lib/api";
-import type { SharedFile } from "@/lib/types";
+import type { PublicConfig, SharedFile } from "@/lib/types";
+import { FileDetails } from "./FileDetails";
+import { DocumentPreview, documentPreviewKind } from "./DocumentPreview";
+import { AudioPreview, VideoPreview, type FullscreenVideo } from "./PreviewMedia";
+import { toggleMedia } from "./MediaControls";
+import { usePersistentAudio } from "./PersistentAudio";
 import "./preview.css";
-
-type FullscreenVideo = HTMLVideoElement & {
-  webkitEnterFullscreen?: () => void;
-  webkitExitFullscreen?: () => void;
-  webkitDisplayingFullscreen?: boolean;
-};
-
-function timeLabel(seconds: number) {
-  const total = Math.floor(Number.isFinite(seconds) ? Math.max(0, seconds) : 0);
-  const hours = Math.floor(total / 3600);
-  const minutes = Math.floor((total % 3600) / 60);
-  const remainder = String(total % 60).padStart(2, "0");
-  return hours ? `${hours}:${String(minutes).padStart(2, "0")}:${remainder}` : `${minutes}:${remainder}`;
-}
-
-// Playback updates stay here so the dialog and its actions do not render on every timeupdate.
-function MediaPlayer({ file, mediaRef }: {
-  file: SharedFile;
-  mediaRef: RefObject<HTMLMediaElement | null>;
-}) {
-  const [playing, setPlaying] = useState(false);
-  const [current, setCurrent] = useState(0);
-  const [duration, setDuration] = useState(0);
-  const [volume, setVolume] = useState(1);
-  const [muted, setMuted] = useState(false);
-  const [speed, setSpeed] = useState(1);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [buffered, setBuffered] = useState(0);
-  const scrubbing = useRef(false);
-  const video = file.category === "video";
-  const speeds = [0.5, 0.75, 1, 1.25, 1.5, 2];
-
-  useEffect(() => {
-    const media = mediaRef.current;
-    // Strict Mode replays effects after cleanup; restore the source for that setup.
-    if (media && !media.getAttribute("src")) {
-      media.src = shareURL(file.uniqueID, "v");
-      media.load();
-    }
-    return () => {
-      if (!media) return;
-      media.pause();
-      if ((media as FullscreenVideo).webkitDisplayingFullscreen)
-        (media as FullscreenVideo).webkitExitFullscreen?.();
-      media.removeAttribute("src");
-      media.load();
-    };
-  }, [file.uniqueID, mediaRef]);
-
-  function updateDuration(media: HTMLMediaElement) {
-    setDuration(Number.isFinite(media.duration) ? media.duration : 0);
-    setLoading(false);
-  }
-
-  async function togglePlayback() {
-    const media = mediaRef.current;
-    if (!media) return;
-    if (!media.paused) {
-      media.pause();
-      return;
-    }
-    try {
-      await media.play();
-    } catch {
-      toast.error("Playback could not start. Try again or open the original file.");
-      setLoading(false);
-    }
-  }
-
-  function finishScrubbing() {
-    scrubbing.current = false;
-    if (mediaRef.current) setCurrent(mediaRef.current.currentTime);
-  }
-
-  const mediaEvents = {
-    onLoadedMetadata: (event: React.SyntheticEvent<HTMLMediaElement>) => updateDuration(event.currentTarget),
-    onDurationChange: (event: React.SyntheticEvent<HTMLMediaElement>) => updateDuration(event.currentTarget),
-    onTimeUpdate: (event: React.SyntheticEvent<HTMLMediaElement>) => {
-      if (!scrubbing.current) setCurrent(event.currentTarget.currentTime);
-    },
-    onPlay: () => setPlaying(true),
-    onPause: () => setPlaying(false),
-    onEnded: () => { setPlaying(false); setLoading(false); },
-    onWaiting: () => setLoading(true),
-    onSeeking: () => setLoading(true),
-    onSeeked: () => setLoading(false),
-    onPlaying: () => setLoading(false),
-    onCanPlay: () => setLoading(false),
-    onVolumeChange: (event: React.SyntheticEvent<HTMLMediaElement>) => {
-      setVolume(event.currentTarget.volume);
-      setMuted(event.currentTarget.muted);
-    },
-    onRateChange: (event: React.SyntheticEvent<HTMLMediaElement>) => setSpeed(event.currentTarget.playbackRate),
-    onProgress: (event: React.SyntheticEvent<HTMLMediaElement>) => {
-      const media = event.currentTarget;
-      if (media.buffered.length && Number.isFinite(media.duration) && media.duration > 0)
-        setBuffered(Math.min(100, media.buffered.end(media.buffered.length - 1) / media.duration * 100));
-    },
-    onError: () => {
-      setError("This media could not be played. Open the original file or download it to use another player.");
-      setPlaying(false);
-      setLoading(false);
-    },
-  };
-
-  return (
-    <div className="preview-player">
-      <div className={`preview-stage ${video ? "preview-video-stage" : "preview-audio-stage"}`}>
-        {video ? (
-          <video
-            ref={(element) => { mediaRef.current = element; }}
-            src={shareURL(file.uniqueID, "v")}
-            playsInline preload="metadata" aria-label={file.fileName}
-            {...mediaEvents}
-          />
-        ) : (
-          <>
-            <audio
-              ref={(element) => { mediaRef.current = element; }}
-              src={shareURL(file.uniqueID, "v")}
-              preload="metadata" aria-label={file.fileName}
-              {...mediaEvents}
-            />
-            <div className="preview-audio-art" aria-hidden="true"><Music /></div>
-          </>
-        )}
-        {loading && !error && (
-          <Badge variant="secondary" className="preview-loading" role="status"><LoaderCircle className="animate-spin" />Loading media…</Badge>
-        )}
-        {error && (
-          <Alert className="preview-error"><AlertDescription>
-              <p>{error}</p>
-              <Button variant="secondary" onClick={() => {
-                setError(""); setLoading(true); setBuffered(0); mediaRef.current?.load();
-              }}><RotateCcw />Try again</Button>
-          </AlertDescription></Alert>
-        )}
-      </div>
-      <div className="preview-playback-controls" aria-label="Media controls">
-        <div className="preview-timeline">
-          <span className="preview-time">{timeLabel(current)}</span>
-          <div className="preview-seek">
-            <span className="preview-buffer" aria-hidden="true" style={{ width: `${buffered}%` }} />
-            <Slider
-              aria-label="Seek" aria-valuetext={`${timeLabel(current)} of ${timeLabel(duration)}`}
-              value={[current]} min={0} max={duration || 1} step={1} disabled={!duration || !!error}
-              onPointerDown={() => { scrubbing.current = true; }}
-              onPointerUp={finishScrubbing}
-              onPointerCancel={finishScrubbing}
-              onLostPointerCapture={finishScrubbing}
-              onValueChange={([value]) => setCurrent(value)}
-              onValueCommit={([value]) => {
-                const media = mediaRef.current;
-                if (media) media.currentTime = value;
-                setCurrent(value);
-              }}
-            />
-          </div>
-          <span className="preview-time">{duration ? timeLabel(duration) : "--:--"}</span>
-        </div>
-        <div className="preview-control-row">
-          <Button variant="secondary" size="icon" aria-label={playing ? "Pause" : "Play"}
-            disabled={!!error} onClick={togglePlayback}>{playing ? <Pause /> : <Play />}</Button>
-          <Button variant="ghost" size="icon" aria-label={muted || !volume ? "Unmute" : "Mute"}
-            aria-pressed={muted || !volume}
-            onClick={() => {
-              const media = mediaRef.current;
-              if (!media) return;
-              if (media.muted || media.volume === 0) {
-                if (!media.volume) media.volume = 1;
-                media.muted = false;
-              } else media.muted = true;
-            }}>{muted || !volume ? <VolumeX /> : <Volume2 />}</Button>
-          <Slider className="preview-volume" aria-label="Volume"
-            aria-valuetext={`${Math.round((muted ? 0 : volume) * 100)} percent`}
-            value={[muted ? 0 : volume]} min={0} max={1} step={0.05}
-            onValueChange={([value]) => {
-              const media = mediaRef.current;
-              if (media) { media.volume = value; media.muted = false; }
-            }} />
-          <Button variant="outline" className="preview-speed"
-            aria-label={`Playback speed: ${speed}×. Change playback speed`}
-            title="Change playback speed: 0.5×, 0.75×, 1×, 1.25×, 1.5×, 2×"
-            onClick={() => {
-              if (mediaRef.current)
-                mediaRef.current.playbackRate = speeds[(speeds.indexOf(speed) + 1) % speeds.length];
-            }}>{speed}×</Button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 function ImagePreview({ file }: { file: SharedFile }) {
   const [failed, setFailed] = useState(false);
   const [loading, setLoading] = useState(true);
-  return (
-    <div className="preview-stage preview-image-stage">
-      {!failed && <img src={shareURL(file.uniqueID, "v")} alt={file.fileName}
-        onLoad={() => setLoading(false)} onError={() => { setFailed(true); setLoading(false); }} />}
-      {loading && <Badge variant="secondary" className="preview-loading" role="status"><LoaderCircle className="animate-spin" />Loading image…</Badge>}
-      {failed && <Alert className="preview-error"><AlertDescription>This image could not be loaded. Open the original file or download it to view it.</AlertDescription></Alert>}
-    </div>
-  );
+  return <div className="preview-stage preview-image-stage">
+    {!failed && <img src={shareURL(file.uniqueID, "v")} alt={file.fileName}
+      onLoad={() => setLoading(false)} onError={() => { setFailed(true); setLoading(false); }} />}
+    {loading && <Badge variant="secondary" className="preview-loading" role="status"><LoaderCircle className="animate-spin" />Loading image…</Badge>}
+    {failed && <Alert className="preview-error"><AlertDescription>This image could not be loaded. Open the original file or download it to view it.</AlertDescription></Alert>}
+  </div>;
+}
+
+function ActionHint({ label, container, children }: { label: string; container: HTMLElement | null; children: ReactElement }) {
+  return <Tooltip disableHoverableContent>
+    <TooltipTrigger asChild onFocus={event => event.preventDefault()}>{children}</TooltipTrigger>
+    <TooltipContent side="bottom" container={container}>{label}</TooltipContent>
+  </Tooltip>;
 }
 
 export interface PreviewNavigation {
@@ -229,46 +43,32 @@ export interface PreviewNavigation {
   onRetry: () => void;
 }
 
-export function FilePreview({ file, onClose, navigation }: { file: SharedFile | null; onClose: () => void; navigation?: PreviewNavigation }) {
-  const viewerRef = useRef<HTMLDivElement>(null);
-  const [tooltipContainer, setTooltipContainer] = useState<HTMLDivElement | null>(null);
-  const attachViewer = useCallback((element: HTMLDivElement | null) => {
-    viewerRef.current = element;
-    setTooltipContainer(element);
-  }, []);
-  const mediaRef = useRef<HTMLMediaElement | null>(null);
+const keyboardControls = 'input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="slider"],[role="combobox"],[role="menu"],[role="menuitem"],[aria-haspopup],audio,video,iframe,[data-document-preview-scroll]';
+
+export function FilePreview({ file, config, onClose, navigation }: {
+  file: SharedFile | null;
+  config?: PublicConfig;
+  onClose: () => void;
+  navigation?: PreviewNavigation;
+}) {
+  const [viewer, setViewer] = useState<HTMLDivElement | null>(null);
+  const video = useRef<FullscreenVideo | null>(null);
   const previousFocus = useRef<HTMLElement | null>(null);
-  const open = !!file;
-  const [previousOpen, setPreviousOpen] = useState(open);
+  const moreButton = useRef<HTMLButtonElement | null>(null);
+  const nativeButton = useRef<HTMLButtonElement | null>(null);
+  const { toggle: toggleAudio } = usePersistentAudio();
   const [expanded, setExpanded] = useState(false);
-  const [fullscreen, setFullscreen] = useState(false);
+  const [details, setDetails] = useState<{ file: SharedFile; returnFocus: HTMLElement | null } | null>(null);
 
-  // File changes preserve expansion; closing starts the next session at normal size.
-  if (previousOpen !== open) {
-    setPreviousOpen(open);
-    if (!open) setExpanded(false);
-  }
-
-  useEffect(() => {
-    const viewer = viewerRef.current;
-    return () => {
-      if (viewer && document.fullscreenElement === viewer)
-        void document.exitFullscreen().catch(() => {});
-    };
-  }, [open]);
-
-  useEffect(() => {
-    function syncFullscreen() {
-      setFullscreen(!!document.fullscreenElement && document.fullscreenElement === viewerRef.current);
-    }
-    document.addEventListener("fullscreenchange", syncFullscreen);
-    return () => document.removeEventListener("fullscreenchange", syncFullscreen);
+  const focusAfterFullscreen = useCallback(() => {
+    const button = nativeButton.current?.getClientRects().length ? nativeButton.current : moreButton.current;
+    button?.focus({ preventScroll: true });
   }, []);
 
   function closePreview() {
-    mediaRef.current?.pause();
-    if (document.fullscreenElement === viewerRef.current && document.exitFullscreen)
-      void document.exitFullscreen().catch(() => {});
+    video.current?.pause();
+    setExpanded(false);
+    setDetails(null);
     onClose();
   }
 
@@ -276,26 +76,22 @@ export function FilePreview({ file, onClose, navigation }: { file: SharedFile | 
     if (!navigation || navigation.loading ||
         (direction === -1 && navigation.position <= 1) ||
         (direction === 1 && navigation.position >= navigation.total)) return;
-    mediaRef.current?.pause();
+    video.current?.pause();
     navigation.onNavigate(direction);
   }
 
   async function toggleFullscreen() {
-    const viewer = viewerRef.current;
-    if (!viewer) return;
-    if (document.fullscreenElement === viewer) {
-      await document.exitFullscreen().catch(() => {});
-      return;
-    }
-    try {
-      if (viewer.requestFullscreen) {
-        await viewer.requestFullscreen();
-        return;
+    const movie = video.current;
+    if (movie) {
+      // Keep the inline element (and its clock) for the entire native player session.
+      movie.controls = true;
+      if (movie.requestFullscreen) {
+        try { await movie.requestFullscreen(); return; } catch { /* Try Safari's native video API. */ }
       }
-    } catch { /* Fall back to iOS video fullscreen or viewport expansion. */ }
-    const video = mediaRef.current as FullscreenVideo | null;
-    if (file?.category === "video" && video?.webkitEnterFullscreen) {
-      try { video.webkitEnterFullscreen(); return; } catch { /* Metadata may not be ready yet. */ }
+      if (movie.webkitEnterFullscreen) {
+        try { movie.webkitEnterFullscreen(); return; } catch { /* The browser may require decoded metadata. */ }
+      }
+      movie.controls = false;
     }
     setExpanded(true);
     toast.info("Preview expanded. Fullscreen is unavailable in this browser.");
@@ -311,92 +107,106 @@ export function FilePreview({ file, onClose, navigation }: { file: SharedFile | 
     }
   }
 
-  return (
-    <Dialog open={!!file} onOpenChange={(open) => { if (!open) closePreview(); }}>
-      <DialogContent ref={attachViewer} className="file-preview-dialog" showCloseButton={false}
-        data-expanded={expanded || fullscreen}
-        onKeyDown={(event) => {
-          if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey ||
-              (event.key !== "ArrowLeft" && event.key !== "ArrowRight")) return;
-          const target = event.target;
-          if (target instanceof Element && target.closest('input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="slider"],[role="combobox"],[role="menu"],[role="menuitem"],audio,video,[data-slot="select-content"],[data-slot="dropdown-menu-content"]')) return;
-          if (navigation) {
-            event.preventDefault();
-            navigate(event.key === "ArrowLeft" ? -1 : 1);
-          }
-        }}
-        onOpenAutoFocus={() => {
-          if (document.activeElement instanceof HTMLElement && !viewerRef.current?.contains(document.activeElement))
-            previousFocus.current = document.activeElement;
-        }}
-        onCloseAutoFocus={(event) => {
+  const isMedia = file?.category === "video" || file?.category === "audio";
+  const stageNavigation = navigation && <nav className="preview-navigation" aria-label="Preview navigation">
+    <Button variant="outline" size="icon" aria-label="Previous file" disabled={navigation.loading || navigation.position <= 1} onClick={() => navigate(-1)}><ChevronLeft /></Button>
+    <Button variant="outline" size="icon" aria-label="Next file" disabled={navigation.loading || navigation.position >= navigation.total} onClick={() => navigate(1)}><ChevronRight /></Button>
+  </nav>;
+  return <Dialog open={!!file} onOpenChange={open => { if (!open) closePreview(); }}>
+    <DialogContent ref={setViewer} className="file-preview-dialog" showCloseButton={false} data-expanded={expanded} tabIndex={-1}
+      onEscapeKeyDown={event => {
+        const movie = video.current;
+        if (!movie || (document.fullscreenElement !== movie && !movie.webkitDisplayingFullscreen)) return;
+        event.preventDefault();
+        if (document.fullscreenElement === movie) void document.exitFullscreen().catch(() => {});
+        else movie.webkitExitFullscreen?.();
+      }}
+      onKeyDown={event => {
+        if (!file || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+        const target = event.target;
+        if (!(target instanceof Element) || target.closest('[role="dialog"]') !== event.currentTarget || target.closest(keyboardControls)) return;
+        if (event.key === " " && (file.category === "video" || file.category === "audio")) {
+          if (target.closest('a,button,summary,[role="button"],[role="link"],[role="checkbox"],[tabindex="0"]') && target !== event.currentTarget) return;
           event.preventDefault();
-          if (previousFocus.current?.isConnected) previousFocus.current.focus();
-        }}>
-        {file && <>
-          <header className="preview-header">
-            <div className="preview-heading">
-              <DialogTitle title={file.fileName}>{file.fileName}</DialogTitle>
-              <DialogDescription>{bytes(file.fileSize)} · {file.fileType || file.category}</DialogDescription>
-            </div>
-            <div className="preview-window-actions">
-              {/* Keep dialog/keyboard focus without opening hover-only labels. */}
-              <Tooltip disableHoverableContent>
-                <TooltipTrigger asChild onFocus={(event) => event.preventDefault()}>
-              <Button className="preview-resize" variant="ghost" size="icon" aria-label={expanded || fullscreen ? "Restore preview size" : "Maximize preview"}
-                aria-pressed={expanded || fullscreen} onClick={() => {
-                  if (fullscreen) void document.exitFullscreen().catch(() => {});
-                  setExpanded(fullscreen ? false : !expanded);
-                }}>
-                {expanded || fullscreen ? <PanelsTopLeft /> : <AppWindow />}
-              </Button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom" container={tooltipContainer}>
-                  {expanded || fullscreen ? "Restore viewer size" : "Expand viewer to browser window"}
-                </TooltipContent>
-              </Tooltip>
-              <Tooltip disableHoverableContent>
-                <TooltipTrigger asChild onFocus={(event) => event.preventDefault()}>
-              <Button variant="ghost" size="icon" aria-label={fullscreen ? "Exit fullscreen" : "Enter fullscreen"}
-                aria-pressed={fullscreen} onClick={toggleFullscreen}>{fullscreen ? <Minimize /> : <Fullscreen />}</Button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom" container={tooltipContainer}>
-                  {fullscreen ? "Exit device fullscreen" : "Enter device fullscreen"}
-                </TooltipContent>
-              </Tooltip>
-              <Tooltip disableHoverableContent>
-                <TooltipTrigger asChild onFocus={(event) => event.preventDefault()}>
-              <Button variant="ghost" size="icon" aria-label="Close preview" onClick={closePreview}><X /></Button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom" container={tooltipContainer}>Close preview</TooltipContent>
-              </Tooltip>
-            </div>
-          </header>
-          {navigation && <nav className="preview-navigation" aria-label="Preview navigation">
-            <Button variant="ghost" size="icon" aria-label="Previous file" disabled={navigation.loading || navigation.position <= 1} onClick={() => navigate(-1)}><ChevronLeft /></Button>
-            <span role="status" aria-live="polite">{navigation.position.toLocaleString()} / {navigation.total.toLocaleString()}</span>
-            <Button variant="ghost" size="icon" aria-label="Next file" disabled={navigation.loading || navigation.position >= navigation.total} onClick={() => navigate(1)}><ChevronRight /></Button>
-          </nav>}
-          <div className="preview-body" aria-busy={navigation?.loading || false}>
-            <div className="preview-content" inert={navigation?.loading || undefined} data-loading={navigation?.loading || undefined}>
-            {file.category === "photo" || file.category === "gif" ? <ImagePreview key={file.uniqueID} file={file} />
-              : file.category === "video" || file.category === "audio" ? <MediaPlayer key={file.uniqueID} file={file} mediaRef={mediaRef} />
-              : <div className="preview-stage preview-unsupported"><File aria-hidden="true" /><p>Open or download this file to view it.</p></div>}
-            </div>
-            {navigation?.loading && <Badge variant="secondary" className="preview-navigation-loading" role="status"><LoaderCircle className="animate-spin" />Loading file…</Badge>}
-            {navigation?.error && <Alert className="preview-navigation-error" variant="destructive"><AlertDescription>
-              <p>{navigation.error}</p>
-              <Button variant="outline" onClick={navigation.onRetry}><RotateCcw />Retry</Button>
-            </AlertDescription></Alert>}
+          if (event.repeat || navigation?.loading) return;
+          if (file.category === "audio") toggleAudio(file);
+          else if (video.current) toggleMedia(video.current);
+        } else if (navigation && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+          event.preventDefault();
+          navigate(event.key === "ArrowLeft" ? -1 : 1);
+        }
+      }}
+      onOpenAutoFocus={event => {
+        if (document.activeElement instanceof HTMLElement) previousFocus.current = document.activeElement;
+        event.preventDefault();
+        (event.currentTarget as HTMLElement)?.focus?.({ preventScroll: true });
+      }}
+      onCloseAutoFocus={event => {
+        event.preventDefault();
+        if (previousFocus.current?.isConnected) previousFocus.current.focus();
+      }}>
+      {file && <>
+        <header className="preview-header">
+          <div className="preview-heading">
+            <DialogTitle title={file.fileName}>{file.fileName}</DialogTitle>
+            <DialogDescription>
+              {navigation && <span className="preview-position" role="status" aria-live="polite">{navigation.position.toLocaleString()} / {navigation.total.toLocaleString()}</span>}
+              {bytes(file.fileSize)} · {file.fileType || file.category}
+            </DialogDescription>
           </div>
-          <footer className="preview-file-actions" aria-label="File actions">
-            <Button variant="outline" asChild><a href={shareURL(file.uniqueID, "v")} target="_blank" rel="noopener noreferrer"
-              aria-label="Open original file in a new tab"><ExternalLink />Open original</a></Button>
-            <Button variant="outline" onClick={copyLink}><Link />Copy link</Button>
-            <Button variant="default" asChild><a href={shareURL(file.uniqueID, "d")} download={file.fileName}><Download />Download</a></Button>
-          </footer>
-        </>}
-      </DialogContent>
-    </Dialog>
-  );
+          <div className="preview-window-actions">
+            <Button className="preview-desktop-action" variant="outline" asChild>
+              <a href={shareURL(file.uniqueID, "v")} target="_blank" rel="noopener noreferrer" aria-label="Open original file in a new tab"><ExternalLink />Open original</a>
+            </Button>
+            <Button className="preview-desktop-action" variant="outline" asChild>
+              <a href={shareURL(file.uniqueID, "d")} download={file.fileName}><Download />Download</a>
+            </Button>
+            <ActionHint container={viewer} label={expanded ? "Restore viewer size" : "Expand viewer to browser window"}>
+              <Button className="preview-desktop-action preview-resize" variant="ghost" size="icon"
+                aria-label={expanded ? "Restore preview size" : "Maximize preview"} aria-pressed={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? <PanelsTopLeft /> : <AppWindow />}</Button>
+            </ActionHint>
+            {file.category === "video" && <ActionHint container={viewer} label="Enter device fullscreen">
+              <Button className="preview-desktop-action" ref={nativeButton} variant="ghost" size="icon" aria-label="Enter fullscreen"
+                onClick={toggleFullscreen}><Fullscreen /></Button>
+            </ActionHint>}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button ref={moreButton} variant="ghost" size="icon" aria-label="More preview actions"><Ellipsis /></Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="preview-actions-menu">
+                <DropdownMenuItem className="preview-mobile-action" asChild>
+                  <a href={shareURL(file.uniqueID, "v")} target="_blank" rel="noopener noreferrer"><ExternalLink />Open original</a>
+                </DropdownMenuItem>
+                <DropdownMenuItem className="preview-mobile-action" asChild>
+                  <a href={shareURL(file.uniqueID, "d")} download={file.fileName}><Download />Download</a>
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={copyLink}><Link />Copy link</DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setDetails({ file, returnFocus: moreButton.current })}><Info />File details</DropdownMenuItem>
+                {file.category === "video" && <DropdownMenuItem className="preview-mobile-action" onSelect={toggleFullscreen}><Fullscreen />Enter fullscreen</DropdownMenuItem>}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <ActionHint container={viewer} label="Close preview">
+              <Button variant="ghost" size="icon" aria-label="Close preview" onClick={closePreview}><X /></Button>
+            </ActionHint>
+          </div>
+        </header>
+        <div className="preview-body" aria-busy={navigation?.loading || false}>
+          <div className="preview-content" inert={navigation?.loading || undefined} data-loading={navigation?.loading || undefined}>
+            {file.category === "photo" || file.category === "gif" ? <ImagePreview key={file.uniqueID} file={file} />
+              : file.category === "video" ? <VideoPreview key={file.uniqueID} file={file} videoRef={video} restoreFocus={focusAfterFullscreen}>{stageNavigation}</VideoPreview>
+              : file.category === "audio" ? <AudioPreview key={file.uniqueID} file={file}>{stageNavigation}</AudioPreview>
+              : documentPreviewKind(file) ? <DocumentPreview key={file.uniqueID} file={file} />
+              : <div className="preview-stage preview-unsupported"><File aria-hidden="true" /><p>Open or download this file to view it.</p></div>}
+          </div>
+          {!isMedia && stageNavigation}
+          {navigation?.loading && <Badge variant="secondary" className="preview-navigation-loading" role="status"><LoaderCircle className="animate-spin" />Loading file…</Badge>}
+          {navigation?.error && <Alert className="preview-navigation-error" variant="destructive"><AlertDescription>
+            <p>{navigation.error}</p>
+            <Button variant="outline" onClick={navigation.onRetry}><RotateCcw />Retry</Button>
+          </AlertDescription></Alert>}
+        </div>
+        {details && <FileDetails file={details.file} config={config} returnFocus={details.returnFocus} onClose={() => setDetails(null)} />}
+      </>}
+    </DialogContent>
+  </Dialog>;
 }

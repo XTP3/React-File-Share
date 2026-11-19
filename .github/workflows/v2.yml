@@ -172,4 +172,6 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           python3 scripts/package-release.py --checksums
-          gh release create "$RELEASE_TAG" release/* --verify-tag --generate-notes --title "X $RELEASE_TAG"
+          release_flags=()
+          if [[ "$RELEASE_TAG" == *-* ]]; then release_flags+=(--prerelease); fi
+          gh release create "$RELEASE_TAG" release/* --verify-tag --generate-notes --title "X $RELEASE_TAG" "${release_flags[@]}"

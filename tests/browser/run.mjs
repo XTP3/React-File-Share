@@ -6,8 +6,10 @@ import { baseURL, creationCode, password, changedPassword, photo, audioFixture, 
 import { readableEditableInputs, selectionRegression } from './selection.mjs';
 import { layoutRegression } from './layout.mjs';
 import { uploadLayoutRegression } from './upload-layout.mjs';
+import { uploadCollectionsRegression } from './upload-collections.mjs';
 import { bulkPreviewRegression } from './bulk-preview.mjs';
 import { previewMediaNavigationRegression } from './preview-more.mjs';
+import { documentRegression } from './documents.mjs';
 
 const artifacts = path.resolve(process.env.ARTIFACTS_DIR || 'artifacts');
 await mkdir(artifacts, { recursive: true });
@@ -65,10 +67,17 @@ async function login(pass = password, account = username) {
   await page.getByLabel('Username', { exact: true }).fill(account);
   await page.getByLabel('Password', { exact: true }).fill(pass);
   await page.getByRole('button', { name: 'Login', exact: true }).click();
-  await visible(page.getByRole('heading', { name: 'Files', exact: true }));
+  await visible(page.getByRole('heading', { name: 'All Files', exact: true }));
   session = await api(context.request, '/auth/me');
 }
-async function clearFilters() { const button = page.getByRole('button', { name: 'Clear filters', exact: true }); if (await button.isVisible()) await button.click(); await page.getByLabel('Search files', { exact: true }).fill(''); await page.getByLabel('Search files', { exact: true }).press('Enter'); }
+async function clearFilters() {
+  const search = page.getByLabel('Search files', { exact: true });
+  await visible(search);
+  const button = page.getByRole('button', { name: 'Clear filters', exact: true });
+  if (await button.isVisible()) await button.click();
+  await search.fill('');
+  await search.press('Enter');
+}
 async function centeredAuth(formName) {
   await visible(page.getByRole('form', { name: formName, exact: true }));
   await visible(page.getByRole('img', { name: 'X', exact: true }));
@@ -99,9 +108,10 @@ async function previewControlsFit() {
   await noHorizontalOverflow(page);
 }
 async function mediaPlayback(tag) {
-  const dialog = page.locator('.file-preview-dialog'), media = dialog.locator(tag);
+  const dialog = page.locator('.file-preview-dialog'), media = page.locator(tag);
   await eventually(async () => assert.ok(await media.evaluate(element => Number.isFinite(element.duration) && element.duration >= 3.9)), 'Real media metadata loaded');
   assert.equal(await media.getAttribute('controls'), null, 'Media uses custom controls');
+  await media.evaluate(element => { element.volume = 1; element.muted = false; element.playbackRate = 1; element.currentTime = 0; });
   if (tag === 'video') assert.notEqual(await media.getAttribute('playsinline'), null, 'Mobile video can play inline with custom controls');
   await dialog.getByRole('button', { name: 'Play', exact: true }).click();
   await eventually(async () => assert.ok(await media.evaluate(element => !element.paused && element.currentTime > 0)), 'Play starts real playback');
@@ -135,13 +145,18 @@ async function mediaPlayback(tag) {
   await previewControlsFit();
 }
 async function previewFullscreen() {
-  await page.locator('.file-preview-dialog').getByRole('button', { name: 'Enter fullscreen', exact: true }).click();
-  await eventually(async () => assert.ok(await page.evaluate(() => document.fullscreenElement?.classList.contains('file-preview-dialog')) || await page.locator('.file-preview-dialog').getAttribute('data-expanded') === 'true'), 'Fullscreen keeps the dialog and its controls together');
-  await previewControlsFit();
-  const native = await page.evaluate(() => !!document.fullscreenElement);
-  (report.fullscreen ||= []).push({ viewport: page.viewportSize(), native });
-  if (native) await page.getByRole('button', { name: 'Exit fullscreen', exact: true }).click();
-  else await page.getByRole('button', { name: 'Restore preview size', exact: true }).click();
+  const viewer = page.locator('.file-preview-dialog');
+  const fullscreen = viewer.getByRole('button', { name: 'Enter fullscreen', exact: true });
+  if (await fullscreen.isVisible()) await fullscreen.click();
+  else {
+    await viewer.getByRole('button', { name: 'More preview actions', exact: true }).click();
+    await page.getByRole('menuitem', { name: /fullscreen/i }).click();
+  }
+  const media = viewer.locator('video');
+  await eventually(async () => assert.ok(await media.evaluate(element => document.fullscreenElement === element)), 'Fullscreen targets the video itself');
+  assert.notEqual(await media.getAttribute('controls'), null, 'Native fullscreen enables native video controls');
+  await page.evaluate(() => document.exitFullscreen());
+  await eventually(async () => assert.equal(await media.getAttribute('controls'), null), 'Inline video controls return after exiting fullscreen');
 }
 
 try {
@@ -166,6 +181,10 @@ try {
     assert.equal(await page.getByRole('button', { name: 'Create Account', exact: true }).count(), 0, 'Login has no signup section');
     assert.equal(await page.getByRole('link', { name: /create account|sign up/i }).count(), 0);
     await centeredAuth('Login');
+    await page.goto('/login');
+    await visible(page.getByLabel('Username', { exact: true }));
+    await page.keyboard.press('Tab');
+    assert.ok(await page.getByLabel('Username', { exact: true }).evaluate(element => element === document.activeElement), 'Username receives the first Tab');
     await screenshot('desktop-login-dark');
     await page.setViewportSize({ width: 390, height: 844 });
     await centeredAuth('Login');
@@ -173,17 +192,12 @@ try {
     await screenshot('mobile-login-dark');
     await page.setViewportSize({ width: 1440, height: 1000 });
     await login();
-    await currentHeader('Files');
+    await currentHeader('All Files');
     assert.equal(await page.getByRole('button', { name: /^Uncollected/ }).count(), 0, 'Uncollected is not a sidebar destination');
     assert.equal(await page.getByRole('button', { name: 'New collection', exact: true }).count(), 0);
     assert.equal(await page.getByRole('button', { name: 'Create collection', exact: true }).count(), 1, 'One plus button creates collections');
-    assert.equal(await page.locator('.page-heading p').count(), 0, 'Files heading has no subtitle');
-    await visible(page.getByRole('heading', { name: 'All Files', exact: true, level: 2 }));
-    // Removing the login form leaves the browser's sequential-navigation start
-    // point engine-dependent. Start on a known control and verify real tab order.
-    await page.getByRole('button', { name: /^All Files/ }).focus();
-    await page.keyboard.press('Tab');
-    assert.ok(await page.getByRole('button', { name: 'Create collection', exact: true }).evaluate(element => element === document.activeElement), 'Tab reaches the next enabled navigation control');
+    await visible(page.getByRole('heading', { name: 'All Files', exact: true }));
+    assert.equal(await page.getByRole('heading', { name: 'All Files', exact: true }).count(), 1, 'There is one page heading');
     await noHorizontalOverflow(page);
     await screenshot('desktop-empty-dark');
   });
@@ -192,18 +206,18 @@ try {
     files = await seedFiles(context.request, session.csrfToken);
     assert.equal(files.length, 33);
     await page.reload();
-    await visible(page.getByRole('heading', { name: 'Files', exact: true }));
+    await visible(page.getByRole('heading', { name: 'All Files', exact: true }));
     await eventually(async () => assert.equal((await api(context.request, '/storage')).totalFiles, 33), 'Storage file count');
-    await visible(page.getByRole('button', { name: 'Show stats', exact: true }));
+    await visible(page.getByRole('button', { name: 'Storage', exact: true }));
     assert.equal(await page.getByRole('region', { name: 'Storage overview', exact: true }).count(), 0, 'Statistics start hidden for a new account');
-    await page.getByRole('button', { name: 'Show stats', exact: true }).click();
+    await page.getByRole('button', { name: 'Storage', exact: true }).click();
     await visible(page.getByRole('region', { name: 'Storage overview', exact: true }).getByText('33', { exact: true }));
     const storage = await api(context.request, '/storage');
     assert.equal(storage.totalBytes, files.reduce((sum, file) => sum + file.fileSize, 0));
-    await page.getByRole('button', { name: 'Details', exact: true }).click();
     await visible(page.getByRole('heading', { name: 'Storage by type', exact: true }));
-    await visible(page.getByText('31 files', { exact: true }));
-    await visible(page.getByText('68 B', { exact: true }).last());
+    await visible(page.getByRole('row').filter({ hasText: 'Documents' }).getByText('31', { exact: true }));
+    await visible(page.getByRole('dialog', { name: 'Storage', exact: true }).getByText('68 B', { exact: true }).last());
+    await screenshot('desktop-storage');
     await page.keyboard.press('Escape');
     const pageTwo = await waitForList(page, () => page.getByRole('button', { name: 'Next page', exact: true }).click(), url => url.searchParams.get('page') === '2');
     assert.equal(pageTwo.page, 2); assert.equal(pageTwo.items.length, 8);
@@ -211,7 +225,7 @@ try {
     await screenshot('desktop-files-dark');
   });
 
-  await check('Viewport file browser, saved stats visibility, loading transitions and full filenames', async () => {
+  await check('Viewport file browser, persistent sidebar collapse, loading transitions and full filenames', async () => {
     await layoutRegression({ page, context, session, screenshot });
   });
 
@@ -266,7 +280,10 @@ try {
     await page.keyboard.press('Escape');
     const filtered = await api(context.request, '/files?' + requests.at(-1).url.searchParams.toString());
     assert.equal(filtered.total, 2);
+    await page.getByRole('button', { name: 'Storage', exact: true }).click();
     await visible(page.getByRole('region', { name: 'Storage overview', exact: true }).getByText('33', { exact: true }));
+    await page.keyboard.press('Escape');
+    await page.getByRole('dialog', { name: 'Storage', exact: true }).waitFor({ state: 'hidden' });
     assert.ok(filtered.items.every(file => ['photo', 'archive'].includes(file.category) && file.fileSize <= 105));
     await clearFilters();
     await page.getByRole('combobox', { name: 'Sort files', exact: true }).click();
@@ -279,13 +296,15 @@ try {
     assert.ok((await page.getByRole('combobox', { name: 'Sort files', exact: true }).textContent()).includes('Name A–Z'));
     assert.equal(await page.getByRole('combobox', { name: 'Files per page', exact: true }).textContent(), '50');
     await page.getByRole('button', { name: 'List view', exact: true }).click();
-    await page.getByRole('button', { name: 'Change theme', exact: true }).click();
+    await page.getByRole('button', { name: 'Account menu', exact: true }).click();
+    await page.getByRole('menuitem', { name: /^Theme/ }).press('ArrowRight');
     await page.getByRole('menuitem', { name: 'Light', exact: true }).click();
     assert.ok(!(await page.evaluate(() => document.documentElement.classList.contains('dark'))));
     await page.reload();
     assert.ok(!(await page.evaluate(() => document.documentElement.classList.contains('dark'))));
     await screenshot('desktop-files-light');
-    await page.getByRole('button', { name: 'Change theme', exact: true }).click();
+    await page.getByRole('button', { name: 'Account menu', exact: true }).click();
+    await page.getByRole('menuitem', { name: /^Theme/ }).press('ArrowRight');
     await page.getByRole('menuitem', { name: 'Dark', exact: true }).click();
   });
 
@@ -317,7 +336,7 @@ try {
     await page.getByRole('button', { name: /^Filters/ }).click();
     assert.ok(await page.getByRole('checkbox', { name: 'Uncollected', exact: true }).isChecked(), 'Uncollected preference survives reload');
     await page.keyboard.press('Escape');
-    await currentHeader('Files');
+    await currentHeader('All Files');
     await page.getByRole('button', { name: /^Browser collection/ }).click();
     await currentHeader('Browser collection');
     await page.getByRole('button', { name: /^Filters/ }).click();
@@ -328,7 +347,12 @@ try {
     await page.reload();
     assert.equal(await page.getByLabel('Search files', { exact: true }).inputValue(), 'browser-archive');
     assert.equal(await page.getByRole('region', { name: 'Storage overview', exact: true }).count(), 0, 'Collections do not display overall library statistics');
-    await visible(page.getByRole('button', { name: 'Add from library', exact: true }));
+    await page.getByRole('button', { name: 'Storage', exact: true }).click();
+    const storageDialog = page.getByRole('dialog', { name: 'Storage', exact: true });
+    await visible(storageDialog.getByText('Files in this collection', { exact: true }));
+    await visible(storageDialog.getByText('2', { exact: true }).first());
+    assert.equal(await storageDialog.getByText('Your collections', { exact: true }).count(), 0);
+    await page.keyboard.press('Escape');
     await page.getByRole('button', { name: 'Collection actions', exact: true }).click();
     await page.getByRole('menuitem', { name: 'Rename collection', exact: true }).click();
     await page.getByLabel('Collection name', { exact: true }).fill('Browser renamed');
@@ -345,7 +369,7 @@ try {
       await noHorizontalOverflow(page);
       await screenshot(`mobile-collection-header-${width}`);
       await home.click();
-      await currentHeader('Files');
+      await currentHeader('All Files');
       assert.equal(new URL(page.url()).pathname, '/files', 'The logo returns to All Files in one action');
       assert.equal(await page.getByLabel('Search files', { exact: true }).inputValue(), '', 'Home restores main-library preferences');
       await page.getByRole('button', { name: 'Open navigation', exact: true }).click();
@@ -376,8 +400,8 @@ try {
     // Wait for its UI transition before the next group edits the search input.
     await page.getByRole('dialog').waitFor({ state: 'hidden' });
     await page.waitForURL(url => url.pathname === '/files');
-    await visible(page.getByRole('heading', { name: 'All Files', exact: true, level: 2 }));
-    await currentHeader('Files');
+    await visible(page.getByRole('heading', { name: 'All Files', exact: true }));
+    await currentHeader('All Files');
     assert.equal(await page.getByLabel('Search files', { exact: true }).inputValue(), '');
   });
 
@@ -400,7 +424,7 @@ try {
       const imageFile = mediaFiles.find(file => file.category === 'photo');
       assert.ok(imageFile);
       const thumbnailPath = `/api/v2/files/${imageFile.uniqueID}/thumbnail`;
-      const thumbnail = page.locator(`[aria-label="File explorer"] img[src="${thumbnailPath}"]`);
+      const thumbnail = page.locator(`.explorer img[src="${thumbnailPath}"]`);
       await thumbnail.scrollIntoViewIfNeeded();
       await eventually(async () => assert.ok(await thumbnail.evaluate(image => image.complete && image.naturalWidth > 0)), 'Server thumbnail decoded');
       const dimensions = await thumbnail.evaluate(image => ({ width: image.naturalWidth, height: image.naturalHeight }));
@@ -419,7 +443,7 @@ try {
       assert.equal(await page.locator('.mobile-file-list').count(), 0);
       assert.equal(await page.getByRole('checkbox', { name: `Select ${imageFile.fileName}`, exact: true }).count(), 1);
       await page.setViewportSize({ width: 390, height: 844 });
-      await eventually(async () => assert.equal(await page.locator('[aria-label="File explorer"] table').count(), 0), 'Mobile list mounts without a desktop table');
+      await eventually(async () => assert.equal(await page.locator('.explorer table').count(), 0), 'Mobile list mounts without a desktop table');
       assert.equal(await thumbnail.count(), 1, 'Mobile image mounts exactly one static thumbnail');
       await thumbnail.scrollIntoViewIfNeeded();
       await eventually(async () => assert.ok(await thumbnail.evaluate(image => image.complete && image.naturalWidth === 384)), 'Mobile static thumbnail decoded');
@@ -441,20 +465,17 @@ try {
       await popup.close();
       await previewControlsFit();
       assert.equal(await page.getByRole('tooltip').count(), 0, 'Opening a preview does not display a tooltip');
-      await page.getByRole('button', { name: 'Enter fullscreen', exact: true }).focus();
+      await page.getByRole('button', { name: 'Maximize preview', exact: true }).focus();
       assert.equal(await page.getByRole('tooltip').count(), 0, 'Keyboard focus does not open hover-only viewer tooltips');
       await screenshot('desktop-image-preview');
       await page.getByRole('button', { name: 'Maximize preview', exact: true }).hover();
       await visible(page.getByRole('tooltip', { name: 'Expand viewer to browser window', exact: true }));
-      await page.getByRole('button', { name: 'Enter fullscreen', exact: true }).hover();
-      await visible(page.getByRole('tooltip', { name: 'Enter device fullscreen', exact: true }));
       await page.getByRole('button', { name: 'Maximize preview', exact: true }).click();
       await eventually(async () => {
         const maximized = await page.locator('.file-preview-dialog').boundingBox();
         assert.ok(Math.abs(maximized.x) <= 1 && Math.abs(maximized.y) <= 1 && maximized.width >= page.viewportSize().width - 2 && maximized.height >= page.viewportSize().height - 2, `Maximized preview fills the viewport: ${JSON.stringify(maximized)}`);
       }, 'Maximized geometry');
       await page.getByRole('button', { name: 'Restore preview size', exact: true }).click();
-      await previewFullscreen();
       await page.getByRole('button', { name: 'Close preview', exact: true }).click();
       await previewMediaNavigationRegression({ page, context, session, screenshot, mediaFiles });
       for (const [width, height] of [[1440, 1000], [390, 844], [844, 390]]) {
@@ -470,7 +491,7 @@ try {
           }
           if (file.category === 'video' || file.category === 'audio') {
             await mediaPlayback(file.category === 'video' ? 'video' : 'audio');
-            await previewFullscreen();
+            if (file.category === 'video') await previewFullscreen();
             if (width === 1440) {
               const nativeViewEvent = page.waitForEvent('popup');
               await page.getByRole('link', { name: 'Open original file in a new tab', exact: true }).click();
@@ -495,7 +516,8 @@ try {
           const screen = width === 1440 ? 'desktop' : width === 390 ? 'mobile' : 'mobile-landscape';
           await screenshot(`${screen}-${file.category}-preview`);
           await page.getByRole('button', { name: 'Close preview', exact: true }).click();
-          assert.equal(await page.locator('.file-preview-dialog video, .file-preview-dialog audio').count(), 0, 'Closing releases the media element');
+          assert.equal(await page.locator('.file-preview-dialog video').count(), 0, 'Closing releases video');
+          if (file.category === 'audio') await page.getByRole('region', { name: 'Audio player', exact: true }).getByRole('button', { name: 'Stop audio', exact: true }).click();
         }
       }
     } catch (error) {
@@ -517,6 +539,14 @@ try {
       await page.reload();
     }
     assert.equal((await api(context.request, '/files')).total, 33, 'Media fixtures are removed before count-sensitive checks');
+  });
+
+  await check('Text and PDF previews render safely and fit desktop and mobile', async () => {
+    await documentRegression({ page, context, session, screenshot });
+  });
+
+  await check('Upload defaults and per-file collection overrides work on mobile', async () => {
+    await uploadCollectionsRegression({ page, context, session, screenshot });
   });
 
   await check('Local upload preview supports remove/add before real transfer', async () => {
@@ -592,13 +622,14 @@ try {
     await noHorizontalOverflow(page);
     await eventually(async () => {
       const uploadBox = await page.getByRole('button', { name: 'Upload', exact: true }).boundingBox();
-      const headingBox = await page.locator('.page-heading').boundingBox();
-      assert.ok(Math.abs(uploadBox.width - headingBox.width) <= 2, 'Upload spans the mobile content width after responsive transitions');
-    }, 'Mobile upload width');
-    await eventually(async () => assert.equal(await page.locator('[aria-label="File explorer"] table').count(), 0), 'Mobile list does not mount a second desktop table');
+      const searchBox = await page.getByRole('textbox', { name: 'Search files', exact: true }).boundingBox();
+      assert.ok(uploadBox.width >= 44 && uploadBox.height >= 44, 'Header Upload has a full touch target');
+      assert.ok(searchBox.width >= 365, 'Search uses the mobile content width');
+    }, 'Compact mobile header and full-width search');
+    await eventually(async () => assert.equal(await page.locator('.explorer table').count(), 0), 'Mobile list does not mount a second desktop table');
     assert.equal(await page.getByRole('checkbox', { name: 'Select browser-archive.zip', exact: true }).count(), 1);
     await screenshot('mobile-files-dark');
-    await page.evaluate(() => document.querySelector('[aria-label="File explorer"]').scrollIntoView({ block: 'start' }));
+    await page.evaluate(() => document.querySelector('.explorer').scrollIntoView({ block: 'start' }));
     await screenshot('mobile-explorer-dark');
     const typography = await page.locator('.mobile-file-list').evaluate(element => ({
       filenamePx: parseFloat(getComputedStyle(element.querySelector('.file-name')).fontSize),
@@ -686,7 +717,7 @@ try {
       await eventually(async () => assert.ok(await update.isEnabled()), 'Update enabled after upload cancellation');
       await network.send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
       await update.click();
-      await visible(page.getByRole('heading', { name: 'Files', exact: true }));
+      await visible(page.getByRole('heading', { name: 'All Files', exact: true }));
       assert.equal((await api(context.request, '/files?q=update-probe')).total, 0, 'Cancelled upload leaves no record');
     } finally { await network.detach(); }
   });
@@ -713,8 +744,9 @@ try {
     await visible(page.getByRole('button', { name: 'Login', exact: true }));
     assert.equal((await context.request.get('/api/v2/auth/me')).status(), 401);
     await login(changedPassword);
+    await page.getByRole('button', { name: 'Collapse sidebar', exact: true }).click();
     await page.getByRole('button', { name: 'Account menu', exact: true }).click();
-    await page.getByRole('menuitem', { name: 'Sign out', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Logout', exact: true }).click();
     await visible(page.getByRole('button', { name: 'Login', exact: true }));
     assert.equal((await context.request.get('/api/v2/auth/me')).status(), 401);
 
@@ -723,23 +755,24 @@ try {
     const secondary = `${username}-other`;
     await api(context.request, '/auth/register', { method: 'POST', data: { username: secondary, password, creationCode }, expected: 201 });
     await login(password, secondary);
-    await visible(page.getByRole('button', { name: 'Show stats', exact: true }));
-    assert.equal(await page.getByRole('region', { name: 'Storage overview', exact: true }).count(), 0, 'A second account also defaults to hidden statistics');
+    await visible(page.getByRole('button', { name: 'Storage', exact: true }));
+    await visible(page.getByRole('button', { name: 'Collapse sidebar', exact: true }));
     assert.equal(await page.getByRole('combobox', { name: 'Files per page', exact: true }).textContent(), '25');
     assert.ok((await page.getByRole('combobox', { name: 'Sort files', exact: true }).textContent()).includes('Newest first'));
     assert.equal(await page.getByLabel('Search files', { exact: true }).inputValue(), '');
     assert.equal((await api(context.request, '/files')).total, 0);
     await page.getByRole('button', { name: 'Account menu', exact: true }).click();
-    await page.getByRole('menuitem', { name: 'Sign out', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Logout', exact: true }).click();
     await visible(page.getByRole('button', { name: 'Login', exact: true }));
     await login(changedPassword);
     assert.equal(await page.getByRole('combobox', { name: 'Files per page', exact: true }).textContent(), '50');
-    await visible(page.getByRole('button', { name: 'Hide stats', exact: true }));
+    await visible(page.getByRole('button', { name: 'Expand sidebar', exact: true }));
+    await page.getByRole('button', { name: 'Expand sidebar', exact: true }).click();
     assert.ok((await page.getByRole('combobox', { name: 'Sort files', exact: true }).textContent()).includes('Name A–Z'));
     const preferences = await page.evaluate(() => Object.values(localStorage).join('\n'));
     assert.ok(!preferences.includes(password) && !preferences.includes(changedPassword) && !preferences.includes(session.csrfToken), 'Credentials must never be persisted as preferences');
     await page.getByRole('button', { name: 'Account menu', exact: true }).click();
-    await page.getByRole('menuitem', { name: 'Sign out', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Logout', exact: true }).click();
     await visible(page.getByRole('button', { name: 'Login', exact: true }));
     assert.deepEqual(report.browserErrors, [], `Browser exceptions/errors: ${report.browserErrors.join('\n')}`);
   });

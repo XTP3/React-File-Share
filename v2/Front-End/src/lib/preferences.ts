@@ -92,3 +92,12 @@ export function applyTheme(value: Theme) {
     /* private storage */
   }
 }
+
+export function readSidebarCollapsed(user: string): boolean {
+  try { return localStorage.getItem(prefix + user + ":sidebarCollapsed") === "true"; }
+  catch { return false; }
+}
+export function saveSidebarCollapsed(user: string, collapsed: boolean) {
+  try { localStorage.setItem(prefix + user + ":sidebarCollapsed", String(collapsed)); }
+  catch { /* storage can be disabled */ }
+}
