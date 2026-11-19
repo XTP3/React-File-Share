@@ -132,10 +132,19 @@ export async function documentRegression({ page, context, session, screenshot })
         const region = await viewer.getByRole('region', { name: 'PDF page', exact: true }).boundingBox();
         assert.ok(canvas.width < region.width && canvas.width > region.width - 56, 'The page fits the resized viewer');
       }, 'PDF reflows at the new viewport size');
-      const controls = await viewer.getByRole('group', { name: 'PDF controls', exact: true }).getByRole('button').all();
-      const targets = await Promise.all(controls.map(control => control.boundingBox()));
-      assert.ok(targets.every(target => target.width >= 44 && target.height >= 44), 'PDF controls retain 44px targets');
-      assert.ok(targets.every(target => Math.abs(target.y - targets[0].y) < 1), 'PDF controls fit on one row');
+      const controls = viewer.getByRole('group', { name: 'PDF controls', exact: true }).getByRole('button');
+      await eventually(async () => {
+        // Use layout dimensions so viewport animations and floating-point
+        // transforms cannot reduce an exact 44px control to 43.999px.
+        const targets = await controls.evaluateAll(buttons => buttons.map(button => ({
+          width: button.offsetWidth,
+          height: button.offsetHeight,
+          top: button.getBoundingClientRect().top,
+        })));
+        assert.equal(targets.length, 5, 'All PDF controls are present');
+        assert.ok(targets.every(target => target.width >= 44 && target.height >= 44), JSON.stringify(targets));
+        assert.ok(targets.every(target => Math.abs(target.top - targets[0].top) < 1), 'PDF controls fit on one row');
+      }, 'PDF controls retain 44px targets after resizing');
       await noHorizontalOverflow(page);
       await screenshot(`preview-pdf-${width}x${height}`);
     }
