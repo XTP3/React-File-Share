@@ -5,10 +5,14 @@ import {
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSub,
+  DropdownMenuSubTrigger,
+  DropdownMenuSubContent,
+  DropdownMenuPortal,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { applyTheme, storedTheme, type Theme } from "@/lib/preferences";
-export function ThemeControl() {
+export function ThemeControl({ submenu = false }: { submenu?: boolean }) {
   const [theme, setTheme] = useState<Theme>(storedTheme);
   useEffect(() => {
     applyTheme(theme);
@@ -19,15 +23,7 @@ export function ThemeControl() {
     query.addEventListener("change", update);
     return () => query.removeEventListener("change", update);
   }, [theme]);
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" aria-label="Change theme">
-          {theme === "light" ? <Sun /> : <Moon />}
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        {(
+  const choices = <>        {(
           [
             { value: "dark", label: "Dark", icon: Moon },
             { value: "light", label: "Light", icon: Sun },
@@ -40,7 +36,7 @@ export function ThemeControl() {
             {theme === value && <Check className="ml-auto" />}
           </DropdownMenuItem>
         ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
+</>;
+  if (submenu) return <DropdownMenuSub><DropdownMenuSubTrigger><Sun />Theme</DropdownMenuSubTrigger><DropdownMenuPortal><DropdownMenuSubContent>{choices}</DropdownMenuSubContent></DropdownMenuPortal></DropdownMenuSub>;
+  return <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label="Change theme">{theme === "light" ? <Sun /> : <Moon />}</Button></DropdownMenuTrigger><DropdownMenuContent align="end">{choices}</DropdownMenuContent></DropdownMenu>;
 }

@@ -21,7 +21,7 @@ export async function previewMediaNavigationRegression({ page, screenshot, media
     await eventually(async () => assert.equal(await page.getByRole('region', { name: 'File list', exact: true }).getAttribute('aria-busy'), 'false'), 'Sorted media list ready');
     await page.getByRole('button', { name: audio.fileName, exact: true }).click();
     await visible(dialog);
-    const oldAudio = await dialog.locator('audio').elementHandle();
+    const oldAudio = await page.locator('audio').elementHandle();
     await eventually(async () => assert.ok(await oldAudio.evaluate(media => Number.isFinite(media.duration) && media.duration >= 3.9)), 'Audio metadata ready');
 
     // Seeking must retain this file even though a next item exists.
@@ -34,30 +34,38 @@ export async function previewMediaNavigationRegression({ page, screenshot, media
     await dialog.getByRole('button', { name: 'Play', exact: true }).click();
     await eventually(async () => assert.ok(await oldAudio.evaluate(media => !media.paused)), 'Audio starts before navigation');
 
-    await dialog.getByRole('button', { name: 'Enter fullscreen', exact: true }).click();
-    await eventually(async () => assert.ok(await dialog.evaluate(element => document.fullscreenElement === element)), 'Native fullscreen entered');
+    await dialog.getByRole('button', { name: 'Maximize preview', exact: true }).click();
+    await visible(dialog.getByRole('button', { name: 'Restore preview size', exact: true }));
     await dialog.getByRole('button', { name: 'Next file', exact: true }).click();
     await visible(dialog.getByRole('heading', { name: image.fileName, exact: true }));
-    assert.ok(await dialog.evaluate(element => document.fullscreenElement === element), 'Native fullscreen survives changing files');
-    assert.deepEqual(await oldAudio.evaluate(media => ({ attached: media.isConnected, paused: media.paused, source: media.getAttribute('src') })), { attached: false, paused: true, source: null }, 'Previous audio is paused and released');
-    await oldAudio.dispose();
+    await visible(dialog.getByRole('button', { name: 'Restore preview size', exact: true }));
+    assert.ok(await oldAudio.evaluate(media => media.isConnected && !media.paused), 'Audio continues when navigating to an image');
 
     await dialog.getByRole('button', { name: 'Next file', exact: true }).click();
     await visible(dialog.getByRole('heading', { name: video.fileName, exact: true }));
     assert.ok(await dialog.getByRole('button', { name: 'Next file', exact: true }).isDisabled(), 'Navigation stops at final result');
     const oldVideo = await dialog.locator('video').elementHandle();
     await eventually(async () => assert.ok(await oldVideo.evaluate(media => Number.isFinite(media.duration))), 'Video metadata ready');
-    await dialog.getByRole('button', { name: 'Play', exact: true }).click();
-    await eventually(async () => assert.ok(await oldVideo.evaluate(media => !media.paused)), 'Video starts before navigation');
+    await dialog.press('Space');
+    await eventually(async () => assert.ok(await oldVideo.evaluate(media => !media.paused)), 'Space starts video playback');
+    await eventually(async () => assert.ok(await oldAudio.evaluate(media => media.paused)), 'Starting video pauses background audio');
+    await dialog.press('Space');
+    await eventually(async () => assert.ok(await oldVideo.evaluate(media => media.paused)), 'Space pauses the video');
     await dialog.press('ArrowLeft');
     await visible(dialog.getByRole('heading', { name: image.fileName, exact: true }));
-    assert.ok(await dialog.evaluate(element => document.fullscreenElement === element), 'Keyboard navigation also retains native fullscreen');
+    await visible(dialog.getByRole('button', { name: 'Restore preview size', exact: true }));
     assert.deepEqual(await oldVideo.evaluate(media => ({ attached: media.isConnected, paused: media.paused, source: media.getAttribute('src') })), { attached: false, paused: true, source: null }, 'Previous video is paused and released');
     await oldVideo.dispose();
     await noHorizontalOverflow(page);
-    await screenshot('preview-native-fullscreen-navigation');
-    await dialog.getByRole('button', { name: 'Exit fullscreen', exact: true }).click();
+    await screenshot('preview-expanded-navigation');
     await dialog.getByRole('button', { name: 'Close preview', exact: true }).click();
+    const player = page.getByRole('region', { name: 'Audio player', exact: true });
+    await visible(player);
+    await player.getByRole('button', { name: 'Play', exact: true }).click();
+    await eventually(async () => assert.ok(await oldAudio.evaluate(media => !media.paused)), 'Mini-player resumes the original audio');
+    await player.getByRole('button', { name: 'Stop audio', exact: true }).click();
+    await eventually(async () => assert.deepEqual(await oldAudio.evaluate(media => ({ paused: media.paused, source: media.getAttribute('src') })), { paused: true, source: null }), 'Stop releases the source');
+    await oldAudio.dispose();
   } finally {
     await page.evaluate(async () => { if (document.fullscreenElement) await document.exitFullscreen(); });
     if (await dialog.count()) await page.keyboard.press('Escape');

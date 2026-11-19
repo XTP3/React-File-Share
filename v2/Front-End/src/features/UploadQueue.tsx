@@ -22,6 +22,10 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { bytes, upload } from "@/lib/api";
+import type { Collection } from "@/lib/types";
+import { UploadCollectionPicker, collectionSummary } from "./UploadCollectionPicker";
+import "./upload-collections.css";
+
 interface QueueItem {
   id: string;
   file: File;
@@ -29,13 +33,18 @@ interface QueueItem {
   progress: number;
   status: "ready" | "queued" | "uploading" | "done" | "error" | "cancelled";
   error?: string;
-  collection?: string;
+  override?: string[];
+  submitted?: string[];
 }
 export function UploadQueue({
   open,
   onOpenChange,
   maxSize,
   collection,
+  collections,
+  collectionsLoading,
+  collectionsError,
+  onRetryCollections,
   onSuccess,
   onActiveChange,
 }: {
@@ -43,12 +52,29 @@ export function UploadQueue({
   onOpenChange: (v: boolean) => void;
   maxSize: number;
   collection: string;
+  collections: Collection[];
+  collectionsLoading: boolean;
+  collectionsError: boolean;
+  onRetryCollections: () => void;
   onSuccess: () => void;
   onActiveChange: (v: boolean) => void;
 }) {
   const [items, setItems] = useState<QueueItem[]>([]);
   const itemsRef = useRef(items);
   itemsRef.current = items;
+  const initialDefaults = () => collection !== "all" && collection !== "uncollected" ? [collection] : [];
+  const [batchIds, setBatchIds] = useState<string[]>(initialDefaults);
+  const wasOpen = useRef(false);
+  useEffect(() => {
+    if (open && !wasOpen.current && !itemsRef.current.length) setBatchIds(collection !== "all" && collection !== "uncollected" ? [collection] : []);
+    wasOpen.current = open;
+  }, [open, collection]);
+  function assignedIds(item: QueueItem): string[] {
+    return item.status === "ready" ? item.override ?? batchIds : item.submitted ?? item.override ?? batchIds;
+  }
+  function assignmentInvalid(ids: string[]) {
+    return !!ids.length && (collectionsLoading || collectionsError || ids.some((id) => !collections.some((c) => c.id === id)));
+  }
   const input = useRef<HTMLInputElement>(null);
   const controllers = useRef(new Map<string, AbortController>());
   const [dragging, setDragging] = useState(false);
@@ -66,7 +92,7 @@ export function UploadQueue({
       .map((x) => x.file.name),
   );
   const invalid =
-    ready.some((x) => x.file.size > maxSize) || duplicates.size > 0;
+    ready.some((x) => x.file.size > maxSize || assignmentInvalid(assignedIds(x))) || duplicates.size > 0;
   useEffect(() => {
     onActiveChange(active);
   }, [active, onActiveChange]);
@@ -126,7 +152,7 @@ export function UploadQueue({
       update(item.id, { status: "uploading" });
       upload(
         item.file,
-        item.collection || collection,
+        item.submitted ?? [],
         (n) => update(item.id, { progress: n }),
         controller.signal,
       )
@@ -142,15 +168,16 @@ export function UploadQueue({
         )
         .finally(() => controllers.current.delete(item.id));
     }
-  }, [items, collection, onSuccess]);
+  }, [items, onSuccess]);
   function start() {
     if (!navigator.onLine) {
       toast.error("You are offline. Reconnect to upload files.");
       return;
     }
+    if (invalid) return;
     setItems((current) =>
       current.map((x) =>
-        x.status === "ready" ? { ...x, status: "queued", collection } : x,
+        x.status === "ready" ? { ...x, status: "queued", submitted: [...(x.override ?? batchIds)] } : x,
       ),
     );
   }
@@ -204,6 +231,10 @@ export function UploadQueue({
               </Button>
             </CardContent>
           </Card>
+          <div>
+            <UploadCollectionPicker label="Batch collections" ids={batchIds} collections={collections} loading={collectionsLoading} error={collectionsError} onRetry={onRetryCollections} onChange={setBatchIds} />
+            <p className="muted">Applies to ready files using batch defaults. Each file can use its own collections.</p>
+          </div>
           {duplicates.size > 0 && (
             <Alert variant="destructive">
               <AlertDescription>
@@ -220,84 +251,104 @@ export function UploadQueue({
             </Alert>
           )}
           <div className="upload-items" aria-label="Upload selection">
-            {items.map((item) => (
-              <Card key={item.id} className="upload-item">
-                <CardContent>
-                  <div className="queue-thumbnail">
-                    {item.url ? <img src={item.url} alt="" /> : <FileIcon />}
-                  </div>
-                  <div className="queue-info">
-                    <p title={item.file.name}>{item.file.name}</p>
-                    <span className="muted">
-                      {bytes(item.file.size)} · {item.file.type || "File"}
-                    </span>
-                    {(item.status === "uploading" ||
-                      item.status === "queued") && (
-                      <Progress
-                        value={item.progress}
-                        aria-label={`Upload progress ${item.file.name}`}
-                      />
-                    )}
-                    <div>
-                      {item.status === "done" ? (
-                        <Badge variant="secondary">
-                          <Check />
-                          Uploaded
-                        </Badge>
-                      ) : item.error ? (
-                        <span className="text-destructive" role="status">
-                          {item.error}
-                        </span>
-                      ) : item.status === "uploading" ? (
-                        <span className="muted">{item.progress >= 100 ? "Waiting for server confirmation…" : `${item.progress}% transferred`}</span>
-                      ) : item.status === "queued" ? (
-                        <span className="muted">Waiting…</span>
-                      ) : null}
+            {items.map((item) => {
+              const editable = item.status === "ready" || item.status === "error" || item.status === "cancelled";
+              const ids = assignedIds(item);
+              return (
+                <Card key={item.id} className="upload-item">
+                  <CardContent>
+                    <div className="queue-thumbnail">
+                      {item.url ? <img src={item.url} alt="" /> : <FileIcon />}
                     </div>
-                  </div>
-                  {item.status === "uploading" || item.status === "queued" ? (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      aria-label={`Cancel ${item.file.name}`}
-                      onClick={() => cancel(item)}
-                    >
-                      <Square />
-                    </Button>
-                  ) : (
-                    <>
-                      {(item.status === "error" ||
-                        item.status === "cancelled") && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          aria-label={`Retry ${item.file.name}`}
-                          disabled={invalid || !navigator.onLine}
-                          onClick={() =>
-                            update(item.id, {
-                              status: "queued",
-                              progress: 0,
-                              error: undefined,
-                              collection: item.collection || collection,
-                            })
-                          }
-                        >
-                          <RotateCcw />
-                        </Button>
+                    <div className="queue-info">
+                      <p title={item.file.name}>{item.file.name}</p>
+                      <span className="muted">
+                        {bytes(item.file.size)} · {item.file.type || "File"}
+                      </span>
+                      {(item.status === "uploading" ||
+                        item.status === "queued") && (
+                        <Progress
+                          value={item.progress}
+                          aria-label={`Upload progress ${item.file.name}`}
+                        />
                       )}
+                      <div className="upload-file-collections">
+                        {editable ? <>
+                          <UploadCollectionPicker
+                            label={`Collections for ${item.file.name}`}
+                            caption={item.override === undefined ? "Batch defaults" : "Custom collections"}
+                            ids={ids}
+                            collections={collections}
+                            loading={collectionsLoading}
+                            error={collectionsError}
+                            onRetry={onRetryCollections}
+                            onChange={(next) => update(item.id, { override: next, ...(item.status !== "ready" ? { submitted: [...next] } : {}) })}
+                            onReset={item.override === undefined ? undefined : () => update(item.id, { override: undefined, ...(item.status !== "ready" ? { submitted: [...batchIds] } : {}) })}
+                          />
+                          {assignmentInvalid(ids) && <span className="text-destructive" role="status">{collectionsLoading ? "Waiting for collections…" : collectionsError ? "Load collections or choose no collections to upload." : "Remove unavailable collections before uploading."}</span>}
+                        </> : ids.length > 0 && <p>{collectionSummary(ids, collections)}</p>}
+                      </div>
+                      <div>
+                        {item.status === "done" ? (
+                          <Badge variant="secondary">
+                            <Check />
+                            Uploaded
+                          </Badge>
+                        ) : item.error ? (
+                          <span className="text-destructive" role="status">
+                            {item.error}
+                          </span>
+                        ) : item.status === "uploading" ? (
+                          <span className="muted">{item.progress >= 100 ? "Waiting for server confirmation…" : `${item.progress}% transferred`}</span>
+                        ) : item.status === "queued" ? (
+                          <span className="muted">Waiting…</span>
+                        ) : null}
+                      </div>
+                    </div>
+                    <div className="upload-row-actions">{item.status === "uploading" || item.status === "queued" ? (
                       <Button
                         variant="ghost"
                         size="icon"
-                        aria-label={`Remove ${item.file.name}`}
-                        onClick={() => remove(item.id)}
+                        aria-label={`Cancel ${item.file.name}`}
+                        onClick={() => cancel(item)}
                       >
-                        <X />
+                        <Square />
                       </Button>
-                    </>
-                  )}
-                </CardContent>
-              </Card>
-            ))}
+                    ) : (
+                      <>
+                        {(item.status === "error" ||
+                          item.status === "cancelled") && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label={`Retry ${item.file.name}`}
+                            disabled={duplicates.size > 0 || item.file.size > maxSize || assignmentInvalid(assignedIds(item)) || !navigator.onLine}
+                            onClick={() =>
+                              update(item.id, {
+                                status: "queued",
+                                progress: 0,
+                                error: undefined,
+                                submitted: [...assignedIds(item)],
+                              })
+                            }
+                          >
+                            <RotateCcw />
+                          </Button>
+                        )}
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label={`Remove ${item.file.name}`}
+                          onClick={() => remove(item.id)}
+                        >
+                          <X />
+                        </Button>
+                      </>
+                    )}</div>
+                  </CardContent>
+                </Card>
+              );
+            })}
           </div>
         </div>
         <div className="upload-footer">

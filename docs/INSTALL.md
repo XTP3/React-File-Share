@@ -73,3 +73,17 @@ The uploads mount is durable and must include any staging/recovery files. Mount 
 ## Build from source
 
 See `v2/README.md` in the source repository. Build the frontend first with `npm ci && npm run build`, then build `./cmd/fileshare` from `v2/Back-End` with `CGO_ENABLED=0`. Distribute `www` alongside the executable; assets are not embedded.
+
+## iPhone prerelease check
+
+Install the prerelease in a separate directory, with a fresh database, a new upload directory and separate secrets. Set `SECURE_COOKIES` to `true` and `ALLOWED_ORIGINS` to the staging HTTPS origin. Use an unused internal port, such as `1818`. Point a staging hostname with a trusted certificate to that port through your HTTPS proxy.
+
+```sh
+cd /opt/fileshare-staging
+mkdir -p uploads
+pm2 start "$PWD/fileshare" --name fileshare-staging --interpreter none --kill-timeout 30000 -- \
+  --config "$PWD/Config.json" --uploads-dir "$PWD/uploads" --www-dir "$PWD/www" \
+  --http-port 1818 --https-port 0
+```
+
+In Safari on the iPhone, open the staging origin and tap Share, then Add to Home Screen. Enable Open as Web App if shown. Launch from the icon, sign in to a test account and play a supported audio file several minutes long. Close the preview, open a collection, switch apps and lock the phone. Verify playback continues through those transitions and check the Lock Screen play, pause and seek controls. Return to the app and use Stop to end playback. Check native video fullscreen, a multi-page PDF and a batch upload assigned to multiple collections from the same installation.

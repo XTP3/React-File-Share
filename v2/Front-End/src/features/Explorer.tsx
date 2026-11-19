@@ -1,3 +1,4 @@
+import { AudioMiniPlayer } from "@/features/PersistentAudio";
 import { memo, useEffect, useRef, useState } from "react";
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import {
@@ -371,32 +372,10 @@ export function Explorer({
     );
   }
   return (
-    <section className="explorer" aria-label="File explorer">
+    <section className="explorer" aria-label={`${title} file explorer`}>
       {downloadFiles && <BulkDownloadDialog files={downloadFiles} onClose={() => setDownloadFiles(null)} />}
       {copyLinksDialog}
       <div className="explorer-controls">
-      <div className="explorer-heading">
-        <div>
-          <h2>{title}</h2>
-          <p className="muted">
-            {files.data
-              ? `${files.data.total.toLocaleString()} ${files.data.total === 1 ? "file" : "files"}${prefs.q || activeFilters ? " match your search" : ""}`
-              : "Everything you need, in one place."}
-          </p>
-        </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label="Refresh files"
-          onClick={() => {
-            files.refetch();
-            onRefresh();
-          }}
-          disabled={files.isFetching}
-        >
-          <RefreshCw className={files.isFetching ? "animate-spin" : ""} />
-        </Button>
-      </div>
       <div className="explorer-toolbar">
         <form
           className="search-field"
@@ -429,7 +408,7 @@ export function Explorer({
             </Button>
           )}
         </form>
-        <Button variant="outline" onClick={() => setFilters(true)}>
+        <Button variant="outline" className="filter-control" aria-label={activeFilters ? `Filters, ${activeFilters} active` : "Filters"} onClick={() => setFilters(true)}>
           <SlidersHorizontal />
           <span>Filters</span>
           {activeFilters > 0 && (
@@ -461,6 +440,7 @@ export function Explorer({
             <SelectItem value="type:desc">Type Z–A</SelectItem>
           </SelectContent>
         </Select>
+        <Label className="toolbar-select-all"><Checkbox aria-label="Select all files on this page" checked={pageState(items)} disabled={selectionPending || !items.length} onCheckedChange={(checked) => { resetAnchor(); setVisible(items, checked === true); }} /> <span>Select All</span></Label>
         <div className="view-switch">
           <Button
             variant={prefs.view === "list" ? "secondary" : "ghost"}
@@ -481,6 +461,7 @@ export function Explorer({
             <LayoutGrid />
           </Button>
         </div>
+        <Button className="refresh-files" variant="ghost" size="icon" aria-label="Refresh files" onClick={() => { files.refetch(); onRefresh(); }} disabled={files.isFetching}><RefreshCw className={files.isFetching ? "animate-spin" : ""} /></Button>
       </div>
       {activeFilters > 0 && (
         <div className="active-filters">
@@ -524,20 +505,6 @@ export function Explorer({
           >
             Clear filters
           </Button>
-        </div>
-      )}
-      {items.length > 0 && (
-        <div className="page-selection">
-          <Label>
-            <Checkbox
-              aria-label="Select all files on this page"
-              checked={pageState(items)}
-              disabled={selectionPending}
-              onCheckedChange={(checked) => { resetAnchor(); setVisible(items, checked === true); }}
-            />
-            Select all on this page
-          </Label>
-          <span className="muted">{items.length} on this page</span>
         </div>
       )}
       {selected.size > 0 && (
@@ -630,18 +597,8 @@ export function Explorer({
           >
             {prefs.view === "grid" ? (
               items.map((file) => (
-                <Card className="file-grid-card" key={file.uniqueID}>
+                <Card className="file-grid-card" data-selected={selected.has(file.uniqueID)} key={file.uniqueID}>
                   <CardContent>
-                    <div className="grid-file-top">
-                      <Checkbox
-                        aria-label={`Select ${file.fileName}`}
-                        checked={selected.has(file.uniqueID)}
-                        disabled={selectionPending}
-                        onClick={(event) => select(file, event.shiftKey)}
-                        onPointerDown={(event) => { if (event.shiftKey) event.preventDefault(); }}
-                      />
-                      {menu(file)}
-                    </div>
                     <Button
                       className="grid-preview"
                       variant="ghost"
@@ -657,6 +614,16 @@ export function Explorer({
                       {bytes(file.fileSize)} ·{" "}
                       {formatDate(file.timeOfUpload, config)}
                     </span>
+                    <div className="grid-file-top">
+                      <Checkbox
+                        aria-label={`Select ${file.fileName}`}
+                        checked={selected.has(file.uniqueID)}
+                        disabled={selectionPending}
+                        onClick={(event) => select(file, event.shiftKey)}
+                        onPointerDown={(event) => { if (event.shiftKey) event.preventDefault(); }}
+                      />
+                      {menu(file)}
+                    </div>
                   </CardContent>
                 </Card>
               ))
@@ -760,6 +727,7 @@ export function Explorer({
         <Badge variant="secondary" className="[&>svg]:size-5!"><Spinner role="img" aria-hidden="true" />Loading files…</Badge>
       </div>}
       </div>
+      <AudioMiniPlayer />
       <div className="pagination">
         <div className="page-size">
           <span className="muted">Show</span>
@@ -779,8 +747,8 @@ export function Explorer({
             </SelectContent>
           </Select>
         </div>
-        <span className="muted">
-          Page {page} of {Math.max(files.data?.totalPages || 1, 1)}
+        <span className="muted pagination-summary">
+          <span className="file-result-count">{files.data?.total.toLocaleString() ?? "0"} {files.data?.total === 1 ? "file" : "files"} · </span>Page {page} of {Math.max(files.data?.totalPages || 1, 1)}
         </span>
         <div>
           <Button

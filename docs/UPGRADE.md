@@ -28,6 +28,8 @@ Missing or orphaned files reported during reconciliation require investigation. 
 
 ## Rollback
 
+Before rolling back from v2.4, block new writes, let active transfers finish, and stop the server cleanly. If shutdown was interrupted or MongoDB still contains `storage_operations` records, start the v2.4 binary with the same database and uploads directory while traffic remains blocked. Let startup recovery complete, verify that the journal is empty, and stop v2.4 before starting the older binary. V2.4 records exact membership IDs for multi-collection uploads so recovery can undo partial assignments.
+
 Block writes, stop v2 and confirm no writer remains. If the shared data is healthy, start the preserved v1 server against its original configuration, the same database and upload path. V1 ignores v2's auxiliary collections; do not delete these blindly. Restore the prior proxy/service routing and test existing login/share URLs before reopening writes. Keep original JWT secrets so compatible unexpired tokens remain valid.
 
 If data restoration is necessary, restore the coordinated database and filesystem snapshot together into isolated locations first, verify it, then switch the stopped service to those matching locations. Restoration to the pre-upgrade snapshot loses all writes since that snapshot: preserve the current database/files separately and agree on recovery before replacing live data. Never restore only the database or only the files, and never perform a global production search-and-replace as an upgrade step.

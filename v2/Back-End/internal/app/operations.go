@@ -1,7 +1,9 @@
 package app
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -10,12 +12,17 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/mongo/readpref"
 )
 
 func safeName(s string) bool {
@@ -53,7 +60,7 @@ func (a *App) safePath(owner, name string, create bool) (string, error) {
 	i, e := a.root.Lstat(owner)
 	if errors.Is(e, os.ErrNotExist) && create {
 		e = a.root.Mkdir(owner, 0700)
-		if e == nil {
+		if e == nil || errors.Is(e, os.ErrExist) {
 			i, e = a.root.Lstat(owner)
 			if e == nil {
 				e = syncDir(a.root, ".")
@@ -79,17 +86,18 @@ func (a *App) safePath(owner, name string, create bool) (string, error) {
 }
 
 type operation struct {
-	ID         string   `bson:"_id"`
-	Kind       string   `bson:"kind"`
-	State      string   `bson:"state"`
-	StageDir   string   `bson:"stageDir,omitempty"`
-	Files      []bson.M `bson:"files,omitempty"`
-	Stages     []string `bson:"stages,omitempty"`
-	Collection string   `bson:"collection,omitempty"`
-	Original   bson.M   `bson:"original,omitempty"`
-	Path       string   `bson:"path,omitempty"`
-	Trash      string   `bson:"trash,omitempty"`
-	Shared     bool     `bson:"shared,omitempty"`
+	ID            string          `bson:"_id"`
+	Kind          string          `bson:"kind"`
+	State         string          `bson:"state"`
+	StageDir      string          `bson:"stageDir,omitempty"`
+	Files         []bson.M        `bson:"files,omitempty"`
+	Stages        []string        `bson:"stages,omitempty"`
+	Collection    string          `bson:"collection,omitempty"` // pre-2.4 single-target journal
+	MembershipIDs []bson.ObjectID `bson:"membershipIds,omitempty"`
+	Original      bson.M          `bson:"original,omitempty"`
+	Path          string          `bson:"path,omitempty"`
+	Trash         string          `bson:"trash,omitempty"`
+	Shared        bool            `bson:"shared,omitempty"`
 }
 
 func (a *App) saveOp(ctx context.Context, op operation) error {
@@ -108,7 +116,7 @@ func detached() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), 30*time.Second)
 }
 
-func (a *App) rollbackUpload(ctx context.Context, op operation) error {
+func (a *App) rollbackUpload(ctx context.Context, op operation, recheckOnStartup bool) error {
 	// Staging retains the source inode until the operation is resolved. This
 	// prevents recovery from deleting an unrelated pre-existing destination.
 	for i, f := range op.Files {
@@ -134,23 +142,45 @@ func (a *App) rollbackUpload(ctx context.Context, op operation) error {
 		}
 	}
 	ids := bson.A{}
-	fileids := bson.A{}
 	for _, f := range op.Files {
 		ids = append(ids, f["_id"])
-		fileids = append(fileids, f["uniqueID"])
 	}
 	if len(ids) > 0 {
 		if _, e := a.DB.Collection("files").DeleteMany(ctx, bson.M{"_id": bson.M{"$in": ids}}); e != nil {
 			return e
 		}
-		if _, e := a.DB.Collection("collection_memberships").DeleteMany(ctx, bson.M{"fileId": bson.M{"$in": fileids}}); e != nil {
+	}
+	members := a.DB.Collection("collection_memberships")
+	for batch := range slices.Chunk(op.MembershipIDs, uploadTargetBatchSize) {
+		if _, e := members.DeleteMany(ctx, bson.M{"_id": bson.M{"$in": batch}}); e != nil {
 			return e
+		}
+	}
+	// Older journals lack membership document IDs. Their only possible write
+	// was this owner's singleton target. Keep any surviving file's membership.
+	if len(op.MembershipIDs) == 0 && op.Collection != "" {
+		for _, f := range op.Files {
+			owner, fid := str(f, "uploaderID"), str(f, "uniqueID")
+			n, e := a.DB.Collection("files", options.Collection().SetReadPreference(readpref.Primary())).CountDocuments(ctx, bson.M{"uploaderID": owner, "uniqueID": fid})
+			if e != nil {
+				return e
+			}
+			if n == 0 {
+				if _, e = members.DeleteOne(ctx, bson.M{"ownerID": owner, "collectionId": op.Collection, "fileId": fid}); e != nil {
+					return e
+				}
+			}
 		}
 	}
 	if op.StageDir != "" {
 		if e := a.root.RemoveAll(op.StageDir); e != nil {
 			return e
 		}
+	}
+	if recheckOnStartup {
+		// A timed-out insert can still be executing on the server. Its exact IDs
+		// stay in the journal so recovery can repeat this cleanup.
+		return errors.New("insert acknowledgement lost, rollback will be rechecked at startup")
 	}
 	return a.removeOp(ctx, op.ID)
 }
@@ -219,7 +249,7 @@ func (a *App) finishDelete(ctx context.Context, op operation) error {
 	return a.removeOp(ctx, op.ID)
 }
 func (a *App) recoverOperations(ctx context.Context) error {
-	cur, e := a.DB.Collection("storage_operations").Find(ctx, bson.M{})
+	cur, e := a.DB.Collection("storage_operations", options.Collection().SetReadPreference(readpref.Primary())).Find(ctx, bson.M{})
 	if e != nil {
 		return e
 	}
@@ -230,10 +260,16 @@ func (a *App) recoverOperations(ctx context.Context) error {
 	for _, op := range ops {
 		switch op.Kind {
 		case "upload":
+			if op.State == "intent" {
+				op.State, e = a.resolveUploadCommit(ctx, op.ID)
+				if e != nil {
+					return e
+				}
+			}
 			if op.State == "committed" {
 				e = a.finishUpload(ctx, op)
 			} else {
-				e = a.rollbackUpload(ctx, op)
+				e = a.rollbackUpload(ctx, op, false)
 			}
 		case "delete":
 			e = a.finishDelete(ctx, op)
@@ -275,15 +311,152 @@ func (c contextReader) Read(b []byte) (int, error) {
 	return c.r.Read(b)
 }
 
+const uploadTargetBatchSize = 512
+const multipartFieldLimit = 1 << 20
+
+// encoding/json replaces unpaired UTF-16 escapes with U+FFFD. Check escapes
+// in syntactically valid JSON so a malformed ID cannot select a different ID.
+func pairedUnicodeEscapes(data []byte) bool {
+	for {
+		i := bytes.IndexByte(data, '\\')
+		if i < 0 {
+			return true
+		}
+		if data[i+1] != 'u' {
+			data = data[i+2:]
+			continue
+		}
+		code, _ := strconv.ParseUint(string(data[i+2:i+6]), 16, 16)
+		data = data[i+6:]
+		if code < 0xd800 || code > 0xdfff {
+			continue
+		}
+		if code > 0xdbff || len(data) < 6 || !bytes.HasPrefix(data, []byte(`\u`)) {
+			return false
+		}
+		low, _ := strconv.ParseUint(string(data[2:6]), 16, 16)
+		if low < 0xdc00 || low > 0xdfff {
+			return false
+		}
+		data = data[6:]
+	}
+}
+
+func parseUploadTargets(r io.Reader) ([]string, error) {
+	data, err := io.ReadAll(io.LimitReader(r, multipartFieldLimit+1))
+	if err != nil || len(data) > multipartFieldLimit {
+		return nil, errors.New("collectionIds must fit within 1 MiB")
+	}
+	var ids []string
+	if !utf8.Valid(data) || json.Unmarshal(data, &ids) != nil || ids == nil || !pairedUnicodeEscapes(data) {
+		return nil, errors.New("collectionIds must be a JSON array of collection IDs")
+	}
+	seen := make(map[string]bool)
+	distinct := ids[:0]
+	for _, id := range ids {
+		if !validCollectionID(id) {
+			return nil, errors.New("invalid collection ID")
+		}
+		if !seen[id] {
+			seen[id] = true
+			distinct = append(distinct, id)
+		}
+	}
+	return distinct, nil
+}
+
+// Each batch uses the unique (ownerID, id) index. Only scalar string IDs
+// represent addressable collections, including in databases with legacy rows.
+func (a *App) checkUploadTargets(w http.ResponseWriter, ctx context.Context, owner string, ids []string) bool {
+	for batch := range slices.Chunk(ids, uploadTargetBatchSize) {
+		filter := bson.M{"ownerID": owner, "id": bson.M{"$in": batch}, "$expr": bson.M{"$eq": bson.A{bson.M{"$type": "$id"}, "string"}}}
+		n, err := a.DB.Collection("collections", options.Collection().SetReadPreference(readpref.Primary())).CountDocuments(ctx, filter)
+		if err != nil {
+			fail(w, 503, "collection lookup unavailable")
+			return false
+		}
+		if n != int64(len(batch)) {
+			fail(w, 404, "collection not found")
+			return false
+		}
+	}
+	return true
+}
+
+func (a *App) insertUploadMemberships(ctx context.Context, op operation, ids []string) error {
+	i := 0
+	for batch := range slices.Chunk(op.MembershipIDs, uploadTargetBatchSize) {
+		docs := make([]bson.M, 0, len(batch))
+		for _, membershipID := range batch {
+			file := op.Files[i/len(ids)]
+			docs = append(docs, bson.M{"_id": membershipID, "ownerID": file["uploaderID"], "collectionId": ids[i%len(ids)], "fileId": file["uniqueID"]})
+			i++
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		// Let the server acknowledge this batch before compensating a disconnect.
+		if _, err := a.DB.Collection("collection_memberships").InsertMany(context.WithoutCancel(ctx), docs); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// A cancelled or lost commit reply may hide a successful update. Fence off
+// a delayed commit before rolling back. If Mongo cannot resolve the outcome,
+// leave the journal and links intact for startup recovery.
+func (a *App) commitUpload(ctx context.Context, id string) (state string, err error) {
+	journal := a.DB.Collection("storage_operations")
+	intent := bson.M{"_id": id, "state": "intent"}
+	update, err := journal.UpdateOne(ctx, intent, bson.M{"$set": bson.M{"state": "committed"}})
+	if err == nil && update.MatchedCount == 1 {
+		return "committed", nil
+	}
+	var rejected mongo.WriteException
+	if errors.As(err, &rejected) && len(rejected.WriteErrors) != 0 && rejected.WriteConcernError == nil {
+		return "aborting", nil
+	}
+	recovery, cancel := detached()
+	defer cancel()
+	return a.resolveUploadCommit(recovery, id)
+}
+
+func (a *App) resolveUploadCommit(ctx context.Context, id string) (string, error) {
+	journal := a.DB.Collection("storage_operations")
+	// A single primary write both fences late commits and returns the
+	// authoritative state, even if the URI prefers secondary reads.
+	newState := bson.M{"$cond": bson.A{bson.M{"$eq": bson.A{"$state", "intent"}}, "aborting", "$state"}}
+	update := mongo.Pipeline{bson.D{{Key: "$set", Value: bson.M{"state": newState}}}}
+	opts := options.FindOneAndUpdate().SetProjection(bson.M{"state": 1}).SetReturnDocument(options.After)
+	var stored struct{ State string }
+	if err := journal.FindOneAndUpdate(ctx, bson.M{"_id": id}, update, opts).Decode(&stored); err != nil {
+		return "", err
+	}
+	switch stored.State {
+	case "committed", "aborting":
+		return stored.State, nil
+	default:
+		return "", fmt.Errorf("unexpected upload commit state %q", stored.State)
+	}
+}
+
 func (a *App) upload(w http.ResponseWriter, r *http.Request) {
 	http.NewResponseController(w).EnableFullDuplex()
 	id := who(r)
-	cid := r.URL.Query().Get("collectionId")
-	if cid != "" {
-		if _, e := a.ownedCollection(r.Context(), id.Owner, cid); e != nil {
+	v2 := strings.HasPrefix(r.URL.Path, "/api/v2/")
+	query := r.URL.Query()
+	if len(query["collectionId"]) > 1 {
+		fail(w, 400, "provide a single collectionId query parameter")
+		return
+	}
+	var targets []string
+	if cid := query.Get("collectionId"); cid != "" {
+		if !validCollectionID(cid) {
 			fail(w, 404, "collection not found")
 			return
 		}
+		targets = []string{cid}
 	}
 	// Bound multipart headers and non-file data in addition to aggregate bytes.
 	overhead := int64(16 << 20)
@@ -298,21 +471,33 @@ func (a *App) upload(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "multipart upload required")
 		return
 	}
-	op := operation{ID: randomID(20), Kind: "upload", State: "intent", Collection: cid}
+	op := operation{ID: randomID(20), Kind: "upload", State: "intent"}
 	op.StageDir = filepath.Join(".staging", op.ID)
 	if e = a.saveOp(r.Context(), op); e != nil {
 		fail(w, 503, "upload journal unavailable")
 		return
 	}
-	completed := false
+	locked, retain := false, false
+	recheckInserts := false
 	defer func() {
-		if !completed {
-			ctx, cancel := detached()
-			defer cancel()
-			if e := a.rollbackUpload(ctx, op); e != nil {
-				logOperation(op.ID, e)
-			}
-			a.invalidateStats(id.Owner)
+		if locked {
+			defer a.mutation.Unlock()
+			defer a.invalidateStats(id.Owner)
+		}
+		if retain {
+			return
+		}
+		ctx, cancel := detached()
+		defer cancel()
+		var err error
+		if locked {
+			err = a.rollbackUpload(ctx, op, recheckInserts)
+		} else {
+			// Streaming only touched this operation's private staging directory.
+			err = a.finishUpload(ctx, op)
+		}
+		if err != nil {
+			logOperation(op.ID, err)
 		}
 	}()
 	if e = a.root.Mkdir(op.StageDir, 0700); e != nil {
@@ -322,6 +507,7 @@ func (a *App) upload(w http.ResponseWriter, r *http.Request) {
 	seen := map[string]bool{}
 	total := int64(0)
 	parts := 0
+	hasTargetsField := false
 	for {
 		part, e := reader.NextPart()
 		if errors.Is(e, io.EOF) {
@@ -342,21 +528,44 @@ func (a *App) upload(w http.ResponseWriter, r *http.Request) {
 			fail(w, 400, "too many multipart parts")
 			return
 		}
-		_, params, e := mime.ParseMediaType(part.Header.Get("Content-Disposition"))
+		disposition, params, e := mime.ParseMediaType(part.Header.Get("Content-Disposition"))
 		if e != nil {
 
 			fail(w, 400, "invalid multipart disposition")
 			return
 		}
 		name, hasFile := params["filename"]
+		if v2 && params["name"] == "collectionIds" {
+			if disposition != "form-data" || parts != 1 || hasFile || query.Has("collectionId") {
+				fail(w, 400, "collectionIds must be the first form field and cannot be combined with collectionId")
+				return
+			}
+			targets, e = parseUploadTargets(part)
+			if e != nil {
+				fail(w, 400, e.Error())
+				return
+			}
+			if !a.checkUploadTargets(w, r.Context(), id.Owner, targets) {
+				return
+			}
+			hasTargetsField = true
+			continue
+		}
 		if !hasFile {
-			n, e := io.Copy(io.Discard, io.LimitReader(part, 1<<20+1))
+			n, e := io.Copy(io.Discard, io.LimitReader(part, multipartFieldLimit+1))
 
-			if e != nil || n > 1<<20 {
+			if e != nil || n > multipartFieldLimit {
 				fail(w, 400, "multipart field is too large")
 				return
 			}
 			continue
+		}
+		if hasTargetsField && len(op.Files) > 0 {
+			fail(w, 400, "collectionIds requires exactly one file")
+			return
+		}
+		if !hasTargetsField && len(op.Files) == 0 && !a.checkUploadTargets(w, r.Context(), id.Owner, targets) {
+			return
 		}
 		if !safeName(name) {
 
@@ -446,12 +655,9 @@ func (a *App) upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.mutation.Lock()
-	defer a.mutation.Unlock()
-	if cid != "" {
-		if _, e = a.ownedCollection(r.Context(), id.Owner, cid); e != nil {
-			fail(w, 404, "collection not found")
-			return
-		}
+	locked = true
+	if !a.checkUploadTargets(w, r.Context(), id.Owner, targets) {
+		return
 	}
 	if e = syncDir(a.root, ".staging"); e != nil {
 		fail(w, 500, "staging parent sync failed")
@@ -461,7 +667,13 @@ func (a *App) upload(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, "staging sync failed")
 		return
 	}
-	if _, e = a.DB.Collection("storage_operations").UpdateOne(r.Context(), bson.M{"_id": op.ID}, bson.M{"$set": bson.M{"files": op.Files, "stages": op.Stages}}); e != nil {
+	op.MembershipIDs = make([]bson.ObjectID, len(op.Files)*len(targets))
+	for i := range op.MembershipIDs {
+		op.MembershipIDs[i] = bson.NewObjectID()
+	}
+	prepared, e := a.DB.Collection("storage_operations").UpdateOne(r.Context(), bson.M{"_id": op.ID, "state": "intent"},
+		bson.M{"$set": bson.M{"files": op.Files, "stages": op.Stages, "membershipIds": op.MembershipIDs}})
+	if e != nil || prepared.MatchedCount != 1 {
 		fail(w, 503, "upload journal unavailable")
 		return
 	}
@@ -498,30 +710,38 @@ func (a *App) upload(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, "destination sync failed")
 		return
 	}
-	if _, e = a.DB.Collection("files").InsertMany(r.Context(), op.Files); e != nil {
+	if e = r.Context().Err(); e != nil {
+		fail(w, 400, "upload cancelled")
+		return
+	}
+	if _, e = a.DB.Collection("files").InsertMany(context.WithoutCancel(r.Context()), op.Files); e != nil {
+		recheckInserts = mongo.IsNetworkError(e) || mongo.IsTimeout(e)
 		fail(w, 503, "file metadata could not be saved")
 		return
 	}
-	if cid != "" {
-		for _, f := range op.Files {
-			if _, e = a.DB.Collection("collection_memberships").InsertOne(r.Context(), bson.M{"ownerID": id.Owner, "collectionId": cid, "fileId": f["uniqueID"]}); e != nil {
-				fail(w, 503, "collection assignment failed")
-				return
-			}
-		}
+	if e = a.insertUploadMemberships(r.Context(), op, targets); e != nil {
+		recheckInserts = mongo.IsNetworkError(e) || mongo.IsTimeout(e)
+		fail(w, 503, "collection assignment failed")
+		return
 	}
-	if e = a.markOp(r.Context(), op.ID, "committed"); e != nil {
+	state, e := a.commitUpload(r.Context(), op.ID)
+	if e != nil {
+		retain = true
+		logOperation(op.ID, e)
+		fail(w, 503, "upload pending recovery")
+		return
+	}
+	if state != "committed" {
 		fail(w, 503, "upload commit failed")
 		return
 	}
-	completed = true
-	a.invalidateStats(id.Owner)
+	retain = true
 	ctx, cancel := detached()
 	defer cancel()
 	if e = a.finishUpload(ctx, op); e != nil {
 		logOperation(op.ID, e)
 	}
-	if strings.HasPrefix(r.URL.Path, "/api/v2/") {
+	if v2 {
 		out := []bson.M{}
 		for _, f := range op.Files {
 			f["category"] = category(str(f, "fileName"), str(f, "fileType"))

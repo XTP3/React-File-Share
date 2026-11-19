@@ -22,7 +22,7 @@ async function zoomAllowed(page) {
 
 export async function selectionRegression({ page, context, session, screenshot }) {
   const csrfToken = session.csrfToken;
-  const explorer = page.getByRole('region', { name: 'File explorer', exact: true });
+  const explorer = page.getByRole('region', { name: /file explorer$/ });
   const row = file => explorer.getByRole('checkbox', { name: `Select ${file.fileName}`, exact: true });
   const all = () => explorer.getByRole('checkbox', { name: 'Select all files on this page', exact: true });
   const selected = count => eventually(async () => {
@@ -49,7 +49,11 @@ export async function selectionRegression({ page, context, session, screenshot }
     await scope.getByRole('button', { name: 'Previous page', exact: true }).click();
     await visible(checkbox(expected));
   };
-  let collection;
+  let collection, passed = false;
+  const openLibrary = async () => {
+    await page.getByRole('button', { name: 'Collection actions', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Add from library', exact: true }).click();
+  };
   try {
     await changeOption('Files per page', '25');
     await eventually(async () => assert.equal(await explorer.getByRole('checkbox', { name: /^Select (?!all files)/ }).count(), 25), 'First page is rendered');
@@ -109,8 +113,8 @@ export async function selectionRegression({ page, context, session, screenshot }
     assert.ok(collection);
     await page.getByRole('button', { name: /^Selection regression/ }).click();
     await page.waitForURL(`/collections/${collection.id}`);
-    await visible(page.getByRole('heading', { name: 'Selection regression', exact: true, level: 2 }));
-    await page.getByRole('button', { name: 'Add from library', exact: true }).click();
+    await visible(page.getByRole('heading', { name: 'Selection regression', exact: true }));
+    await openLibrary();
     const picker = page.getByRole('dialog', { name: 'Add from library', exact: true });
     await visible(picker);
     const pickerRow = file => picker.getByRole('checkbox', { name: `Select ${file.fileName}`, exact: true });
@@ -126,7 +130,7 @@ export async function selectionRegression({ page, context, session, screenshot }
     await picker.getByRole('button', { name: 'Cancel', exact: true }).click();
     await picker.waitFor({ state: 'hidden' });
     assert.equal((await api(context.request, `/files?collectionId=${collection.id}`)).total, 0, 'Cancelling picker leaves membership unchanged');
-    await page.getByRole('button', { name: 'Add from library', exact: true }).click(); await visible(picker);
+    await openLibrary(); await visible(picker);
     await pickerCount(0); await pickerSort();
     await pickerRow(first).check(); await pickerNext(); await pickerRow(secondPage).check();
     await pickerCount(2); await pickerPrevious();
@@ -173,7 +177,7 @@ export async function selectionRegression({ page, context, session, screenshot }
     assert.equal((await api(context.request, '/files')).total, 33, 'Picker adds memberships without duplicate files');
     await page.setViewportSize({ width: 1440, height: 1000 });
     await eventually(async () => assert.equal(await explorer.locator('.mobile-file-list').count(), 0), 'Collection returns to desktop list');
-    await page.getByRole('button', { name: 'Add from library', exact: true }).click(); await visible(picker); await pickerSort();
+    await openLibrary(); await visible(picker); await pickerSort();
     await pickerRow(first).check(); await pickerNext(); await pickerRow(secondPage).check();
     await picker.getByRole('button', { name: 'Add selected (2)', exact: true }).click(); await picker.waitFor({ state: 'hidden' });
     assert.equal((await api(context.request, `/files?collectionId=${collection.id}`)).total, 33, 'Adding existing memberships is idempotent');
@@ -189,13 +193,13 @@ export async function selectionRegression({ page, context, session, screenshot }
     page.on('request', observeRemoval);
     try {
       await page.goBack(); await page.waitForURL('/files');
-      await visible(page.getByRole('heading', { name: 'All Files', exact: true, level: 2 }));
+      await visible(page.getByRole('heading', { name: 'All Files', exact: true }));
       await page.getByRole('dialog').waitFor({ state: 'hidden' });
       assert.equal(removalRequests.length, 0, 'Browser Back closes removal confirmation without submitting it');
       assert.equal((await api(context.request, `/files?collectionId=${collection.id}`)).total, 33, 'Browser Back preserves collection membership');
     } finally { page.off('request', observeRemoval); }
     await page.goForward(); await page.waitForURL(`/collections/${collection.id}`);
-    await visible(page.getByRole('heading', { name: 'Selection regression', exact: true, level: 2 }));
+    await visible(page.getByRole('heading', { name: 'Selection regression', exact: true }));
     assert.equal(await page.getByRole('dialog').count(), 0, 'Browser Forward does not revive the old removal confirmation');
     await selected(0);
 
@@ -227,16 +231,21 @@ export async function selectionRegression({ page, context, session, screenshot }
       assert.ok(await coarsePage.evaluate(() => matchMedia('(pointer: coarse)').matches), 'Wide touch context uses coarse pointer');
       await readableEditableInputs(coarsePage, 'Coarse-pointer auth inputs'); await zoomAllowed(coarsePage);
     } finally { await coarse.close(); }
+    passed = true;
   } finally {
     if (await page.getByRole('dialog').count()) { await page.keyboard.press('Escape'); await page.getByRole('dialog').waitFor({ state: 'hidden' }); }
     await page.setViewportSize({ width: 1440, height: 1000 });
     if (collection) await api(context.request, `/collections/${collection.id}`, { method: 'DELETE', csrfToken });
     await page.goto('/files');
-    await visible(page.getByRole('heading', { name: 'All Files', exact: true, level: 2 }));
-    await search('', 25);
-    await changeOption('Sort files', 'Name A–Z');
-    await changeOption('Files per page', '50');
-    await eventually(async () => assert.equal(await explorer.getByRole('checkbox', { name: /^Select (?!all files)/ }).count(), 33), 'Restored original 33-file explorer');
-    assert.equal((await api(context.request, '/files')).total, 33, 'Regression fixture preserves all library files');
+    await visible(page.getByRole('heading', { name: 'All Files', exact: true }));
+    const clear = page.getByRole('button', { name: 'Clear filters', exact: true });
+    if (await clear.isVisible()) await clear.click();
+    if (passed) {
+      await search('', 25);
+      await changeOption('Sort files', 'Name A–Z');
+      await changeOption('Files per page', '50');
+      await eventually(async () => assert.equal(await explorer.getByRole('checkbox', { name: /^Select (?!all files)/ }).count(), 33), 'Restored original 33-file explorer');
+      assert.equal((await api(context.request, '/files')).total, 33, 'Regression fixture preserves all library files');
+    }
   }
 }

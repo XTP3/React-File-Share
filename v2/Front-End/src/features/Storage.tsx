@@ -2,11 +2,8 @@ import { HardDrive, Files, FolderOpen, RefreshCw } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
-import {
-  Popover,
-  PopoverTrigger,
-  PopoverContent,
-} from "@/components/ui/popover";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+
 import { bytes, formatDate } from "@/lib/api";
 import {
   categoryLabels,
@@ -19,12 +16,14 @@ export function Storage({
   onRefresh,
   refreshing,
   config,
+  scope = "library",
 }: {
   stats?: StorageStats;
   collectionCount: number;
   onRefresh: () => void;
   refreshing: boolean;
   config?: PublicConfig;
+  scope?: "library" | "collection";
 }) {
   return (
     <section className="stats-grid" aria-label="Storage overview">
@@ -61,28 +60,6 @@ export function Storage({
                 <span className="muted stat-description">
                   File content · updated {formatDate(stats.updatedAt, config)}
                 </span>
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="link"
-                      size="sm"
-                      className="storage-details-button"
-                    >
-                      Details
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="storage-breakdown" align="start">
-                    <h3>Storage by type</h3>
-                    <p className="muted">Each file is counted once.</p>
-                    {stats.categories.map((c) => (
-                      <div key={c.category}>
-                        <span>{categoryLabels[c.category]}</span>
-                        <span className="muted">{c.count} files</span>
-                        <strong>{bytes(c.bytes)}</strong>
-                      </div>
-                    ))}
-                  </PopoverContent>
-                </Popover>
               </div>
               {(stats.missingFiles > 0 || stats.untrackedBytes > 0) && (
                 <span className="muted stat-description">
@@ -100,32 +77,47 @@ export function Storage({
         <CardContent>
           <div className="stat-label">
             <Files />
-            Files in your library
+            {scope === "library" ? "Files in your library" : "Files in this collection"}
           </div>
           {stats ? (
             <>
               <strong>{stats.totalFiles.toLocaleString()}</strong>
-              <span className="muted stat-description">
-                Stored once, shared anywhere
-              </span>
             </>
           ) : (
             <Skeleton className="h-12 w-24" />
           )}
         </CardContent>
       </Card>
-      <Card>
+      {scope === "library" && <Card>
         <CardContent>
           <div className="stat-label">
             <FolderOpen />
             Your collections
           </div>
           <strong>{collectionCount}</strong>
-          <span className="muted stat-description">
-            A place for every project
-          </span>
         </CardContent>
-      </Card>
+      </Card>}
+      {stats && <div className="storage-breakdown">
+        <h3>Storage by type</h3>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>File type</TableHead>
+              <TableHead>Files</TableHead>
+              <TableHead>Storage</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {stats.categories.map((c) => (
+              <TableRow key={c.category}>
+                <TableCell>{categoryLabels[c.category]}</TableCell>
+                <TableCell>{c.count.toLocaleString()}</TableCell>
+                <TableCell>{bytes(c.bytes)}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>}
     </section>
   );
 }
